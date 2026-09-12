@@ -1,0 +1,11 @@
+{
+  "dockerfile_lines": [],
+  "graphs": {
+    "deep_research_agent": "./agent/graph.py:graph"
+  },
+  "python_version": "3.11",
+  "dependencies": [
+    ".",
+    "trustcall>=0.3"
+  ]
+}

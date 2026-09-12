@@ -1,0 +1,21 @@
+langgraph>=0.3
+langchain-core>=1.0
+langchain-community>=0.3
+langchain-openai>=1.0
+langchain-google-genai>=2.0
+langchain-groq>=0.1.0
+langchain-tavily>=0.2
+python-dotenv>=1.0
+wikipedia>=1.4.0
+
+# Cho SECOND_SOURCE="arxiv" trong agent/nodes.py (mặc định dùng wikipedia,
+# khong can 2 package nay tru khi ban doi co SECOND_SOURCE)
+arxiv>=2.1
+pymupdf>=1.24
+
+# v3 (long-term memory)
+# Latest available release on PyPI at the moment is 0.0.39; 0.3+ does not exist.
+trustcall==0.0.39
+
+# Studio / langgraph dev (optional, cho phep mo LangGraph Studio local)
+langgraph-cli[inmem]>=0.1

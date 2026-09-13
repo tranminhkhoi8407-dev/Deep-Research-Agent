@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Reports (generated at runtime)
+reports/
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

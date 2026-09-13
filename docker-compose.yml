@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+      - ./agent:/app/agent
+      - ./backend:/app/backend
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+  cli:
+    build: .
+    profiles:
+      - cli
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+      - ./agent:/app/agent
+    entrypoint: ["python", "main.py"]
+    command: ["--help"]
+
+  langgraph-studio:
+    build: .
+    profiles:
+      - studio
+    ports:
+      - "8123:8123"
+      - "2024:2024"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - TAVILY_API_KEY=${TAVILY_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
+    env_file:
+      - .env
+    volumes:
+      - ./reports:/app/reports
+      - ./agent:/app/agent
+      - ./backend:/app/backend
+    command: langgraph dev --host 0.0.0.0 --port 8123

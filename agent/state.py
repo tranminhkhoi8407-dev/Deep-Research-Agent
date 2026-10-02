@@ -1,4 +1,4 @@
-"""State schemas cho Deep Research Agent.
+"""State schemas cho Nexora Agent.
 
 Tách riêng khỏi node logic (khác bản gốc research_assistant.py gộp
 chung 1 file) để dễ import từ nhiều module khi project lớn dần qua
@@ -47,6 +47,49 @@ class Perspectives(BaseModel):
     )
 
 
+class ResearchPlan(BaseModel):
+    """Kế hoạch nghiên cứu có cấu trúc được tạo trước khi chia analyst."""
+
+    objective: str = Field(description="Mục tiêu nghiên cứu rõ ràng và có thể kiểm chứng.")
+    key_questions: List[str] = Field(
+        description="Các câu hỏi trọng tâm mà báo cáo phải trả lời."
+    )
+    source_priorities: List[str] = Field(
+        description="Nhóm nguồn ưu tiên: primary, official, academic, industry."
+    )
+    success_criteria: List[str] = Field(
+        description="Tiêu chí để đánh giá báo cáo đã đủ sâu và hữu ích."
+    )
+
+
+class SearchQueries(BaseModel):
+    """Danh sách truy vấn đa góc nhìn cho một câu hỏi nghiên cứu."""
+
+    queries: List[str] = Field(
+        description="Các truy vấn độc lập, cụ thể và không trùng ý."
+    )
+
+
+class EvidenceReview(BaseModel):
+    """Kết quả sàng lọc nguồn trước khi expert được phép sử dụng."""
+
+    usable_source_ids: List[str] = Field(
+        description="ID nguồn liên quan và đủ tin cậy để trả lời câu hỏi hiện tại."
+    )
+    rejected_source_ids: List[str] = Field(
+        default_factory=list,
+        description="ID nguồn lạc đề, yếu, quảng cáo hoặc không có bằng chứng hữu ích.",
+    )
+    evidence_gaps: List[str] = Field(
+        default_factory=list,
+        description="Các khoảng trống bằng chứng còn lại sau khi sàng lọc.",
+    )
+    conflicts: List[str] = Field(
+        default_factory=list,
+        description="Các mâu thuẫn quan trọng giữa những nguồn được giữ lại.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sub-graph 1: sinh danh sách analyst (có human-in-the-loop ở v2)
 # ---------------------------------------------------------------------------
@@ -54,6 +97,14 @@ class Perspectives(BaseModel):
 
 class GenerateAnalystsState(TypedDict):
     topic: str
+    report_language: str
+    research_depth: str
+    research_domain: str
+    research_category: str
+    research_notes: str
+    latex_context: str
+    source_preferences: List[str]
+    research_plan: str
     max_analysts: int
     human_analyst_feedback: str
     analysts: List[Analyst]
@@ -65,8 +116,22 @@ class GenerateAnalystsState(TypedDict):
 
 
 class InterviewState(MessagesState):
+    topic: str
+    report_language: str
+    research_depth: str
+    research_domain: str
+    research_category: str
+    research_notes: str
+    latex_context: str
+    source_preferences: List[str]
+    research_plan: str
+    source_prefix: str
     max_num_turns: int
+    search_queries: List[str]
     context: Annotated[list, operator.add]  # search_web + search_wikipedia gộp vào đây
+    sources: Annotated[list, operator.add]
+    verified_source_ids: List[str]
+    evidence_summary: str
     analyst: Analyst
     interview: str
     sections: list  # duplicate key để Send() map ngược lên ResearchGraphState
@@ -83,6 +148,15 @@ class SearchQuery(BaseModel):
 
 class ResearchGraphState(TypedDict):
     topic: str
+    report_language: str
+    research_depth: str
+    research_domain: str
+    research_category: str
+    research_notes: str
+    latex_context: str
+    source_preferences: List[str]
+    research_plan: str
+    research_questions: List[str]
     max_analysts: int
     human_analyst_feedback: str
     human_section_feedback: str  # feedback từ interrupt 2 (review section)
@@ -90,7 +164,9 @@ class ResearchGraphState(TypedDict):
     user_id: str  # để track profile trong store
     analysts: List[Analyst]
     sections: Annotated[list, operator.add]  # mỗi interview ghi 1 section vào đây
+    sources: Annotated[list, operator.add]
     introduction: str
     content: str
     conclusion: str
     final_report: str
+    audit_notes: str

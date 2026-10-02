@@ -4,5 +4,11 @@ __pycache__/
 .venv/
 venv/
 reports/
+data/
 .langgraph_api/
 *.egg-info/
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

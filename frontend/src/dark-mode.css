@@ -1,0 +1,259 @@
+/* Dark-mode completion layer. Keep these semantic tones separate from --blue:
+   a readable link accent is too pale to be a background behind white text.
+   All rules are scoped so the light visual system stays unchanged. */
+html[data-theme='dark'] {
+  --action-fill: #296bdc;
+  --action-hover: #2e70d8;
+  --on-action: #fff;
+  --tone-info: #203c64;
+  --tone-info-ink: #b8d6ff;
+  --tone-success: #193e35;
+  --tone-success-ink: #85e0ba;
+  --tone-warning: #3e3223;
+  --tone-warning-ink: #f2cc90;
+  --tone-danger: #412735;
+  --tone-danger-ink: #ffadb6;
+  --tone-purple: #332c54;
+  --tone-purple-ink: #c5b8ff;
+  --track: #30425e;
+  --activity-0: #2c3c54;
+  --activity-1: #345681;
+  --activity-2: #4279b4;
+  --activity-3: #599de2;
+  --activity-4: #8dc7ff;
+  scrollbar-color: #556984 var(--surface);
+}
+
+/* Research: controls, every depth state, pipeline and empty/running states. */
+html[data-theme='dark'] :is(.depth-option,.select-wrap select,.switch-row) {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--surface);
+}
+html[data-theme='dark'] .depth-option:hover:not(:disabled) {
+  border-color: var(--blue);
+  background: var(--surface-soft);
+}
+html[data-theme='dark'] .depth-option.is-active {
+  border-color: var(--blue);
+  background: var(--tone-info);
+}
+html[data-theme='dark'] .depth-option em { color: var(--muted); }
+html[data-theme='dark'] .depth-option.is-active :is(strong,em) { color: var(--tone-info-ink); }
+html[data-theme='dark'] :is(.engine-badge,.login-engine-badge) {
+  color: var(--tone-info-ink);
+  border-color: #456793;
+  background: var(--tone-info);
+}
+html[data-theme='dark'] :is(.flow-card__header > span,.flow-steps strong) { color: var(--muted); }
+html[data-theme='dark'] .flow-steps > div > span {
+  color: var(--blue);
+  border-color: var(--line);
+  background: var(--surface-soft);
+}
+html[data-theme='dark'] :is(.flow-steps small,.assurance-grid span) { color: var(--faint); }
+html[data-theme='dark'] :is(.flow-card__header,.flow-metrics,.flow-metrics > div,.idea-list button,.form-footnote,.assurance-grid) { border-color: var(--line); }
+html[data-theme='dark'] .quota-note { color: var(--tone-warning-ink); background: var(--tone-warning); }
+html[data-theme='dark'] .switch { background: #51617a; }
+html[data-theme='dark'] .switch-row input:checked + .switch { background: var(--action-fill); }
+html[data-theme='dark'] .progress-dot {
+  color: var(--muted);
+  border-color: #52647e;
+  background: var(--surface-soft);
+}
+html[data-theme='dark'] .progress-rail .is-active .progress-dot { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] .progress-rail .is-complete .progress-dot { color: #102c22; background: var(--tone-success-ink); }
+html[data-theme='dark'] .progress-rail li:not(:last-child)::after { background: var(--track); }
+html[data-theme='dark'] .source-node--web { color: var(--tone-warning-ink); background: var(--tone-warning); }
+html[data-theme='dark'] .source-node--report { color: var(--tone-success-ink); background: var(--tone-success); }
+html[data-theme='dark'] :is(.source-node--agent,.orbit-core) { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] .connection-line { background: #52647e; }
+html[data-theme='dark'] .empty-facts span { color: var(--muted); background: var(--surface-soft); }
+html[data-theme='dark'] .activity-log { border-color: var(--line); background: var(--surface); }
+html[data-theme='dark'] .activity-row { border-color: var(--line); }
+html[data-theme='dark'] :is(.activity-check,.section-list > div) { color: var(--tone-success-ink); background: var(--tone-success); }
+html[data-theme='dark'] .error-state > div { color: var(--tone-danger-ink); background: var(--tone-danger); }
+html[data-theme='dark'] .button--stop { color: var(--tone-danger-ink); border-color: #885361; background: var(--tone-danger); }
+html[data-theme='dark'] .button--secondary:hover:not(:disabled) { color: var(--ink); border-color: #6585b0; background: #293b56; }
+html[data-theme='dark'] .button--primary:hover:not(:disabled) { color: var(--on-action); background: var(--action-hover); }
+html[data-theme='dark'] .danger-button:hover { color: var(--tone-danger-ink); border-color: #885361; background: var(--tone-danger); }
+html[data-theme='dark'] :is(.research-context-card strong,.notebook-audit > strong) { color: var(--ink); }
+html[data-theme='dark'] .research-context-card > span { background: var(--tone-info); }
+html[data-theme='dark'] .research-context-card > button:hover { background: var(--tone-danger); }
+
+/* Field workspaces retain their individual hues, but not their light tints. */
+html[data-theme='dark'] .domain-hub.domain-mathematics { --domain: #b5a5ff; --domain-soft: #302d4c; --domain-line: #605885; }
+html[data-theme='dark'] .domain-hub.domain-physics { --domain: #8accff; --domain-soft: #203b52; --domain-line: #426883; }
+html[data-theme='dark'] .domain-hub.domain-chemistry { --domain: #f2be88; --domain-soft: #403328; --domain-line: #806043; }
+html[data-theme='dark'] .domain-hub.domain-biology { --domain: #80ddba; --domain-soft: #203d36; --domain-line: #437561; }
+html[data-theme='dark'] .domain-hub.domain-artificial-intelligence { --domain: #a2c7ff; --domain-soft: #253c5d; --domain-line: #4d6c98; }
+html[data-theme='dark'] .domain-picker > button.domain-mathematics { --picker-color: #b5a5ff; }
+html[data-theme='dark'] .domain-picker > button.domain-physics { --picker-color: #8accff; }
+html[data-theme='dark'] .domain-picker > button.domain-chemistry { --picker-color: #f2be88; }
+html[data-theme='dark'] .domain-picker > button.domain-biology { --picker-color: #80ddba; }
+html[data-theme='dark'] .domain-picker > button.domain-artificial-intelligence { --picker-color: #a2c7ff; }
+html[data-theme='dark'] .domain-picker__icon { background: color-mix(in srgb,var(--picker-color) 15%,var(--surface)); }
+html[data-theme='dark'] .domain-picker > button.is-active { background: var(--surface-soft); }
+html[data-theme='dark'] :is(.domain-hero__visual strong,.brief-builder__summary > span) { color: var(--domain); background: var(--domain-soft); }
+html[data-theme='dark'] .domain-brief-builder {
+  color: var(--ink);
+  border-color: var(--domain-line);
+  background: radial-gradient(circle at 10% 20%,color-mix(in srgb,var(--domain) 10%,transparent),transparent 19rem),linear-gradient(120deg,var(--surface),var(--surface-soft));
+}
+html[data-theme='dark'] :is(.notebook-audit,.note-prompts button,.tool-actions button,.research-notebook footer button) {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface-soft);
+}
+html[data-theme='dark'] :is(.tool-actions button:hover,.research-notebook footer button:hover,.note-prompts button:hover) {
+  color: var(--domain);
+  border-color: var(--domain-line);
+  background: var(--domain-soft);
+}
+html[data-theme='dark'] :is(.compact-check,.notebook-audit label,.brief-builder__form > label,.brief-builder__options label) { color: var(--muted); }
+html[data-theme='dark'] .domain-toolkit header > small { color: var(--tone-success-ink); }
+html[data-theme='dark'] .domain-playbooks button { border-color: var(--line); }
+
+/* Guide/pricing share a hero: theme it at the shared class, not just the page. */
+html[data-theme='dark'] .learning-page { color: var(--ink); }
+html[data-theme='dark'] .learning-hero {
+  border-color: var(--line);
+  background: radial-gradient(circle at 50% -10%,rgba(64,129,223,.2),transparent 23rem),linear-gradient(135deg,var(--surface),#1a2b46);
+}
+html[data-theme='dark'] :is(.learning-badge,.learning-quick,.guide-duration,.billing-toggle,.comparison-scroll) {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface);
+}
+html[data-theme='dark'] :is(.learning-badge,.learning-quick) { color: var(--tone-info-ink); }
+html[data-theme='dark'] .billing-toggle button { color: var(--muted); }
+html[data-theme='dark'] :is(.billing-toggle button.is-active,.pricing-popular,.guide-article__actions button:last-child:not(.is-complete)) {
+  color: var(--on-action);
+  background: var(--action-fill);
+}
+html[data-theme='dark'] :is(.billing-toggle em,.guide-checks > span,.guide-article__actions button.is-complete) {
+  color: var(--tone-success-ink);
+  border-color: #42715f;
+  background: var(--tone-success);
+}
+html[data-theme='dark'] :is(.pricing-assurances span,.plan-price span,.guide-topics > span,.guide-toc > header,.guide-article > footer span) { color: var(--muted); }
+html[data-theme='dark'] :is(.plan-price strong,.guide-steps > strong,.guide-checks > strong) { color: var(--ink); }
+html[data-theme='dark'] :is(.current-plan,.plan-equivalent,.pricing-grid li svg,.pricing-assurances svg) { color: var(--tone-success-ink); }
+html[data-theme='dark'] :is(.pricing-grid ul,.pricing-faq details p,.guide-article__actions,.comparison-scroll th,.comparison-scroll td) { border-color: var(--line); }
+html[data-theme='dark'] :is(.comparison-scroll th,.comparison-scroll td) { color: var(--muted); }
+html[data-theme='dark'] .comparison-scroll thead th { color: var(--ink); background: var(--surface-soft); }
+html[data-theme='dark'] .comparison-scroll td.is-yes { color: var(--tone-success-ink); }
+html[data-theme='dark'] :is(.guide-search kbd,.guide-toc section button > span) { color: var(--muted); border-color: var(--line); background: var(--surface-soft); }
+html[data-theme='dark'] .guide-toc section button small { color: var(--muted); }
+html[data-theme='dark'] :is(.guide-article__icon,.guide-steps li > span,.guide-toc section button.is-active > span,.pricing-next-step > span) {
+  color: var(--tone-info-ink);
+  border-color: #456793;
+  background: var(--tone-info);
+}
+html[data-theme='dark'] .guide-article > footer button { color: var(--ink); border-color: var(--line); background: var(--surface-soft); }
+
+/* Profile: distinguish locked/unlocked without dimming the whole text layer. */
+html[data-theme='dark'] :is(.profile-account-card dd,.profile-specialties article strong,.profile-activity-summary strong) { color: var(--ink); }
+html[data-theme='dark'] :is(.profile-completeness strong,.profile-account-card dt,.profile-activity-summary span,.profile-activity-panel > footer,.profile-activity-panel footer small) { color: var(--muted); }
+html[data-theme='dark'] :is(.profile-completeness > div,.profile-specialties article > div,.profile-guide-progress > div,.guide-progress__bar) { background: var(--track); }
+html[data-theme='dark'] :is(.profile-avatar,.profile-avatar > span) { border-color: var(--surface); }
+html[data-theme='dark'] :is(.profile-stat-grid article > span,.profile-dialog > header > div > span) { background: var(--tone-info); }
+html[data-theme='dark'] .profile-achievements article {
+  opacity: 1;
+  border-color: var(--line);
+  background: var(--surface);
+}
+html[data-theme='dark'] .profile-achievements article.is-unlocked { background: linear-gradient(135deg,#203852,#1c3048); }
+html[data-theme='dark'] .profile-achievements article > span { color: var(--muted); background: var(--surface-soft); }
+html[data-theme='dark'] .profile-achievements article.is-unlocked > span { color: var(--tone-info-ink); background: var(--tone-info); }
+html[data-theme='dark'] .profile-achievements article strong { color: var(--muted); }
+html[data-theme='dark'] .profile-achievements article.is-unlocked strong { color: var(--ink); }
+html[data-theme='dark'] .profile-achievements article :is(small,em) { color: var(--muted); }
+html[data-theme='dark'] .profile-achievements article.is-unlocked em { color: var(--tone-success-ink); }
+html[data-theme='dark'] :is(.profile-heatmap i,.profile-activity-panel footer i) { background: var(--activity-0); }
+html[data-theme='dark'] :is(.profile-heatmap i,.profile-activity-panel footer i).level-1 { background: var(--activity-1); }
+html[data-theme='dark'] :is(.profile-heatmap i,.profile-activity-panel footer i).level-2 { background: var(--activity-2); }
+html[data-theme='dark'] :is(.profile-heatmap i,.profile-activity-panel footer i).level-3 { background: var(--activity-3); }
+html[data-theme='dark'] :is(.profile-heatmap i,.profile-activity-panel footer i).level-4 { background: var(--activity-4); }
+html[data-theme='dark'] :is(.profile-role-row span,.profile-role-row span:first-child) { color: var(--tone-info-ink); background: var(--tone-info); }
+html[data-theme='dark'] .profile-role-row span:last-child { color: var(--tone-warning-ink); background: var(--tone-warning); }
+html[data-theme='dark'] .profile-account-card dd.is-active { color: var(--tone-success-ink); }
+html[data-theme='dark'] :is(.profile-completeness,.profile-dialog > header,.profile-dialog form > footer) { border-color: var(--line); }
+html[data-theme='dark'] :is(.profile-dialog > header > button,.profile-form-wide textarea + small) { color: var(--muted); background: var(--surface-soft); }
+html[data-theme='dark'] .profile-form-grid :is(input,textarea):focus { color: var(--ink); background: var(--surface-soft); }
+html[data-theme='dark'] :is(.profile-form-error,.auth-alert) { color: var(--tone-danger-ink); border-color: #885361; background: var(--tone-danger); }
+
+/* Scholarly/report library: badges, filters, notes, saved/unsaved and tables. */
+html[data-theme='dark'] :is(.library-section-tabs,.paper-library__collection-list > div > button:first-child,.paper-library__remove-collection,.paper-library__attach label) {
+  color: var(--muted);
+  border-color: var(--line);
+  background: var(--surface-soft);
+}
+html[data-theme='dark'] :is(.library-section-tabs button,.paper-library__search label,.paper-library__personal > label,.paper-library__pager span,.paper-library__attribution a) { color: var(--muted); }
+html[data-theme='dark'] .library-section-tabs button.is-active { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] :is(.paper-library__source,.paper-library__category,.paper-library__tabs small,.paper-library__stats span,.scholarly-landing__report-icon,.file-icon) {
+  color: var(--tone-info-ink);
+  border-color: var(--line);
+  background: var(--tone-info);
+}
+html[data-theme='dark'] :is(.paper-library__stats strong,.paper-library__tabs button.is-active,.paper-library__pager button) { color: var(--blue); }
+html[data-theme='dark'] :is(.paper-library__tabs button,.paper-library__list-foot,.scholarly-field__code) { color: var(--muted); }
+html[data-theme='dark'] :is(.paper-library__source.is-crossref,.depth-pill.depth-deep,.file-icon.depth-deep) { color: var(--tone-purple-ink); background: var(--tone-purple); }
+html[data-theme='dark'] :is(.depth-pill.depth-quick,.file-icon.depth-quick,.paper-library__star.is-active) { color: var(--tone-warning-ink); background: var(--tone-warning); border-color: #806849; }
+html[data-theme='dark'] :is(.quality-high,.report-domain-tag,.paper-library__saved-badge) { color: var(--tone-success-ink); background: var(--tone-success); }
+html[data-theme='dark'] .quality-medium { color: var(--tone-warning-ink); background: var(--tone-warning); }
+html[data-theme='dark'] .quality-low { color: var(--tone-danger-ink); background: var(--tone-danger); }
+html[data-theme='dark'] :is(.paper-library__error,.paper-library__notice) { color: var(--tone-danger-ink); background: var(--tone-danger); }
+html[data-theme='dark'] .paper-library__notice { color: var(--tone-success-ink); background: var(--tone-success); }
+html[data-theme='dark'] :is(.paper-library__results-heading,.paper-library__tabs,.paper-library__pager,.paper-library__actions,.paper-library__attach,.scholarly-field__action,.recent-report) { border-color: var(--line); }
+html[data-theme='dark'] .report-paper pre code { color: inherit; background: transparent; }
+html[data-theme='dark'] .report-paper pre { color: #dfe9f9; background: #0e192b; }
+html[data-theme='dark'] :is(.paper-library__results-heading > span,.paper-library__list > button small) { color: var(--muted); }
+html[data-theme='dark'] .paper-library__remove-paper { color: var(--tone-danger-ink); }
+html[data-theme='dark'] .collab-project__head select { color: var(--ink); border-color: var(--line); background: var(--surface-soft); }
+html[data-theme='dark'] .collab-tabs button.is-active small { color: var(--on-action); }
+html[data-theme='dark'] .collab-editor__presence { color: var(--on-action); background: var(--action-fill); }
+
+/* Host console, dialogs and public information use the same surface hierarchy. */
+html[data-theme='dark'] :is(.member-dialog,.admin-loading,.admin-error,.system-card-grid article,.member-facts article,.license-options button,.dialog-account-controls,.admin-row-action,.admin-icon-action,.role-select) {
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--surface);
+}
+html[data-theme='dark'] :is(.member-dialog > header,.admin-table-footer,.dialog-close,.license-options button > span,.license-options button.is-selected > span,.mini-health-grid) { color: var(--muted); border-color: var(--line); background: var(--surface-soft); }
+html[data-theme='dark'] :is(.mini-health-grid span,.admin-stat-grid strong) { color: var(--ink); border-color: var(--line); }
+html[data-theme='dark'] .admin-tabs button { color: var(--muted); }
+html[data-theme='dark'] .admin-tabs button:hover { color: var(--ink); background: var(--surface-soft); }
+html[data-theme='dark'] .admin-tabs button.is-active { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] .health-orbit > span { box-shadow: 0 0 0 10px var(--tone-success),0 15px 35px rgba(0,0,0,.2); }
+html[data-theme='dark'] :is(.license-options button.is-selected,.license-options button:hover,.admin-table tbody tr:hover) { color: var(--tone-info-ink); border-color: #608ac2; background: var(--tone-info); }
+html[data-theme='dark'] :is(.member-facts strong,.system-card-grid strong,.health-orbit strong,.mini-health-grid strong,.admin-user-cell strong,.admin-primary-cell strong,.owner-cell strong,.license-expiry,.information-toc > strong,.information-related > strong,.information-rail strong,.public-info-header .brand strong,.remember-copy strong,.oauth-setup-note strong) { color: var(--ink); }
+html[data-theme='dark'] :is(.expiry-field > span,.information-document ul,.information-highlights span,.information-back,.information-meta,.public-info-footer a,.login-legal-footer a,.evidence-preview > header,.remember-copy small,.auth-divider,.site-footer__bottom) { color: var(--muted); }
+html[data-theme='dark'] :is(.provider-badge,.role-badge,.license-badge) { color: var(--muted); border-color: var(--line); background: var(--surface-soft); }
+html[data-theme='dark'] :is(.provider-badge.is-google,.role-badge.is-admin,.license-badge.is-pro) { color: var(--tone-info-ink); background: var(--tone-info); }
+html[data-theme='dark'] :is(.provider-badge.is-local,.license-badge.is-team,.audit-icon.action-user-updated) { color: var(--tone-purple-ink); background: var(--tone-purple); }
+html[data-theme='dark'] .provider-badge.is-github { color: var(--ink); background: var(--surface-soft); }
+html[data-theme='dark'] :is(.account-status.is-active,.system-card-grid em.is-ok,.system-indicator.is-online,.site-footer__status.is-online,.connection--online) { color: var(--tone-success-ink); border-color: #42715f; background: var(--tone-success); }
+html[data-theme='dark'] :is(.account-status.is-suspended,.audit-icon.action-report-deleted,.system-indicator.is-offline,.site-footer__status.is-offline,.connection--offline) { color: var(--tone-danger-ink); border-color: #885361; background: var(--tone-danger); }
+html[data-theme='dark'] .system-card-grid em { color: var(--tone-warning-ink); background: var(--tone-warning); }
+html[data-theme='dark'] :is(.admin-section-heading,.audit-list article,.admin-toolbar,.member-dialog > header,.member-dialog form > footer,.information-toc button,.information-related a,.information-highlights span,.information-table-wrap,.information-table-wrap th,.information-table-wrap td,.evidence-preview > header,.evidence-facts span,.auth-divider::before,.auth-divider::after) { border-color: var(--line); }
+html[data-theme='dark'] :is(.information-action-card > span,.remember-check) { color: var(--tone-info-ink); background: var(--tone-info); border-color: #456793; }
+html[data-theme='dark'] .remember-choice input:checked + .remember-check { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] .remember-choice:hover { background: var(--surface-soft); }
+html[data-theme='dark'] .oauth-buttons em { color: var(--tone-danger-ink); background: var(--tone-danger); }
+html[data-theme='dark'] .auth-divider::before,html[data-theme='dark'] .auth-divider::after { background: var(--line); }
+html[data-theme='dark'] :is(.auth-loading-screen,.welcome-transition) { color: var(--ink); background: #101d30; }
+html[data-theme='dark'] .welcome-progress { background: var(--track); }
+html[data-theme='dark'] .auth-loading-screen > span { background: var(--action-fill); }
+
+/* Editor/tour fixes also work when their stylesheets arrive as lazy chunks. */
+html[data-theme='dark'] .notebook-confirm button:last-child { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] :is(.tour-count,.tour-catalog__action) { color: var(--muted); }
+html[data-theme='dark'] .tour-retry { color: var(--blue); }
+html[data-theme='dark'] .tour-text-button:hover { color: var(--tone-danger-ink); }
+html[data-theme='dark'] :is(.admin-loading i) { background: linear-gradient(90deg,#263851,#3b5272,#263851); background-size: 200% 100%; }
+
+/* Focus and disabled states must not reintroduce bright backgrounds. */
+html[data-theme='dark'] :is(input,textarea,select):not([type='checkbox']):not([type='radio']) { color-scheme: dark; }
+html[data-theme='dark'] select option { color: var(--ink); background: var(--surface-soft); }
+html[data-theme='dark'] :is(.product-nav em,.large-switch.is-active) { color: var(--on-action); background: var(--action-fill); }

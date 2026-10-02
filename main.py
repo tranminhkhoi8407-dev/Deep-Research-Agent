@@ -1,4 +1,4 @@
-"""Entry point CLI: chạy Deep Research Agent cho 1 topic, xuất report .md.
+"""Entry point CLI: chạy Nexora Agent cho 1 topic, xuất report .md.
 
 Usage (v2 — human-in-the-loop):
     python main.py "So sánh RAG vs fine-tuning cho chatbot domain-specific" --max-analysts 3
@@ -14,17 +14,27 @@ v1 behavior (single-shot, no interrupt): dùng --no-interrupt flag.
 
 import argparse
 import os
+import sys
 import uuid
 from datetime import datetime
 
 from dotenv import load_dotenv
-from langgraph.types import Command
 
-from agent.graph import graph
+from agent.graph import batch_graph, graph
+
+
+# PowerShell/Windows đôi khi dùng code page cp1252, làm các thông báo tiếng
+# Việt và emoji bị UnicodeEncodeError ngay cả khi ứng dụng chưa bắt đầu chạy.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 
 def run_v3_interactive(
-    topic: str, max_analysts: int, user_id: str, output_dir: str = "reports"
+    topic: str,
+    max_analysts: int,
+    user_id: str,
+    output_dir: str = "reports",
+    research_depth: str = "standard",
 ) -> str:
     """Chạy graph v3 với long-term memory + 2 interrupt.
 
@@ -34,53 +44,65 @@ def run_v3_interactive(
 
     initial_state = {
         "topic": topic,
+        "report_language": "vi",
+        "research_depth": research_depth,
         "max_analysts": max_analysts,
         "human_analyst_feedback": "",
     }
 
     print(f"\n{'='*60}")
-    print(f"🔬 Deep Research Agent v3 — Long-term Memory")
+    print(f"🔬 Nexora Agent v3 — Long-term Memory")
     print(f"Topic: {topic}")
     print(f"Max analysts: {max_analysts}")
+    print(f"Research depth: {research_depth}")
     print(f"User: {user_id}")
     print(f"{'='*60}\n")
 
     # --- INTERRUPT 1: human_feedback (review analyst list) ---
     print("▶ Đang tải research profile & sinh danh sách analyst...")
-    for event in graph.stream(initial_state, thread, stream_mode="values"):
-        pass
+    graph_input = initial_state
+    profile_printed = False
 
-    state = graph.get_state(thread)
-    analysts = state.values.get("analysts", [])
-    research_profile = state.values.get("research_profile", "")
-
-    if research_profile and research_profile != "Chưa có profile — dùng mặc định.":
-        print(f"\n👤 Research Profile (từ các lần trước):\n   {research_profile.replace(chr(10), chr(10)+'   ')}")
-
-    print(f"\n📋 Đã sinh {len(analysts)} analyst:")
-    for i, a in enumerate(analysts, 1):
-        print(f"  {i}. {a.name} — {a.role} @ {a.affiliation}")
-        print(f"     {a.description}")
-
-    feedback = input(
-        "\n💬 Feedback (Enter để approve, hoặc gõ góp ý để LLM sinh lại analyst): "
-    ).strip()
-
-    graph.update_state(
-        thread,
-        {"human_analyst_feedback": feedback or "approve"},
-        as_node="human_feedback",
-    )
-
-    if feedback:
-        print(f"\n🔄 Đang sinh lại analyst với feedback: {feedback}")
-        for event in graph.stream(None, thread, stream_mode="values"):
+    while True:
+        for _ in graph.stream(graph_input, thread, stream_mode="values"):
             pass
+
         state = graph.get_state(thread)
         analysts = state.values.get("analysts", [])
-        print(f"\n📋 Danh sách analyst mới ({len(analysts)}):")
-        for i, a in enumerate(analysts, 1):
-            print(f"  {i}. {a.name} — {a.role} @ {a.affiliation}")
+        research_profile = state.values.get("research_profile", "")
+
+        if (
+            not profile_printed
+            and research_profile
+            and research_profile != "Chưa có profile — dùng mặc định."
+        ):
+            print(
+                "\n👤 Research Profile (từ các lần trước):\n   "
+                + research_profile.replace("\n", "\n   ")
+            )
+            profile_printed = True
+
+        print(f"\n📋 Đã sinh {len(analysts)} analyst:")
+        for i, analyst in enumerate(analysts, 1):
+            print(f"  {i}. {analyst.name} — {analyst.role} @ {analyst.affiliation}")
+            print(f"     {analyst.description}")
+
+        feedback = input(
+            "\n💬 Feedback (Enter để approve, hoặc gõ góp ý để LLM sinh lại analyst): "
+        ).strip()
+        normalized_feedback = feedback or "approve"
+
+        graph.update_state(
+            thread,
+            {"human_analyst_feedback": normalized_feedback},
+            as_node="human_feedback",
+        )
+
+        if normalized_feedback.lower() == "approve":
+            break
+
+        print(f"\n🔄 Đang sinh lại analyst với feedback: {feedback}")
+        graph_input = None
 
     print("\n▶ Đang chạy N interview song song (mỗi analyst interview 1 expert)...")
 
@@ -110,13 +132,17 @@ def run_v3_interactive(
     )
 
     if review_feedback:
-        print(f"\n🔄 Đang viết lại report với feedback: {review_feedback}")
-        for event in graph.stream(None, thread, stream_mode="values"):
-            pass
+        print(f"\n🔄 Đang viết report với feedback: {review_feedback}")
+
+    # Luôn resume sau interrupt thứ hai, kể cả khi user chỉ nhấn Enter.
+    for _ in graph.stream(None, thread, stream_mode="values"):
+        pass
 
     # --- Final result ---
     final_state = graph.get_state(thread)
     final_report = final_state.values.get("final_report", "")
+    if not final_report:
+        raise RuntimeError("Graph đã kết thúc nhưng không tạo được final_report.")
 
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -132,19 +158,27 @@ def run_v3_interactive(
     return filepath
 
 
-def run_v1_single_shot(topic: str, max_analysts: int, user_id: str, output_dir: str = "reports") -> str:
+def run_v1_single_shot(
+    topic: str,
+    max_analysts: int,
+    user_id: str,
+    output_dir: str = "reports",
+    research_depth: str = "standard",
+) -> str:
     """Chạy graph v1 (không interrupt) — cho automation/batch."""
     thread = {"configurable": {"thread_id": str(uuid.uuid4()), "user_id": user_id}}
 
     initial_state = {
         "topic": topic,
+        "report_language": "vi",
+        "research_depth": research_depth,
         "max_analysts": max_analysts,
         "human_analyst_feedback": "approve",
         "human_section_feedback": "approve",
     }
 
     print(f"Đang research (v1 single-shot): {topic} | {max_analysts} analysts | user: {user_id}...")
-    result = graph.invoke(initial_state, thread)
+    result = batch_graph.invoke(initial_state, thread)
 
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -161,7 +195,7 @@ def run_v1_single_shot(topic: str, max_analysts: int, user_id: str, output_dir: 
 def main() -> None:
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Deep Research Agent — multi-agent research CLI")
+    parser = argparse.ArgumentParser(description="Nexora Agent — multi-agent research CLI")
     parser.add_argument("topic", help="Chủ đề nghiên cứu")
     parser.add_argument(
         "--max-analysts", type=int, default=3, help="Số lượng analyst song song (default: 3)"
@@ -175,13 +209,31 @@ def main() -> None:
     parser.add_argument(
         "--no-interrupt", action="store_true", help="Chạy v1 single-shot (không interrupt, dùng cho CI/batch)"
     )
+    parser.add_argument(
+        "--depth",
+        choices=["quick", "standard", "deep"],
+        default="standard",
+        help="Độ sâu nghiên cứu: quick, standard hoặc deep (default: standard)",
+    )
     args = parser.parse_args()
 
     if args.no_interrupt:
-        filepath = run_v1_single_shot(args.topic, args.max_analysts, args.user_id, args.output_dir)
+        filepath = run_v1_single_shot(
+            args.topic,
+            args.max_analysts,
+            args.user_id,
+            args.output_dir,
+            args.depth,
+        )
         print(f"\nXong. Report đã lưu tại: {filepath}")
     else:
-        filepath = run_v3_interactive(args.topic, args.max_analysts, args.user_id, args.output_dir)
+        filepath = run_v3_interactive(
+            args.topic,
+            args.max_analysts,
+            args.user_id,
+            args.output_dir,
+            args.depth,
+        )
 
 
 if __name__ == "__main__":

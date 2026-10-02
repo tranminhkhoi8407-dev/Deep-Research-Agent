@@ -1,4 +1,4 @@
-"""Long-term memory cho Deep Research Agent (v3).
+"""Long-term memory cho Nexora Agent (v3).
 
 Sử dụng InMemoryStore (langgraph) + Trustcall để duy trì research profile
 theo user_id — càng dùng càng cá nhân hoá.
@@ -14,6 +14,7 @@ except ImportError:  # pragma: no cover - optional dependency fallback
 from pydantic import BaseModel, Field
 from typing import Any, Optional
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.store.base import BaseStore
 
 
@@ -49,8 +50,14 @@ _profile_extractor = None
 def get_llm():
     global _llm
     if _llm is None:
+        provider = os.getenv("LLM_PROVIDER", "auto").strip().lower()
+        if provider not in {"auto", "groq", "gemini", "openai"}:
+            raise RuntimeError(
+                "LLM_PROVIDER must be one of: auto, groq, gemini, openai."
+            )
+
         groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key:
+        if groq_key and provider in {"auto", "groq"}:
             try:
                 from langchain_groq import ChatGroq
 
@@ -65,12 +72,12 @@ def get_llm():
                 pass
 
         gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if gemini_key:
+        if gemini_key and provider in {"auto", "gemini"}:
             try:
                 from langchain_google_genai import ChatGoogleGenerativeAI
 
                 _llm = ChatGoogleGenerativeAI(
-                    model="gemini-3.6-flash",
+                    model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
                     google_api_key=gemini_key,
                     temperature=0,
                 )
@@ -79,13 +86,16 @@ def get_llm():
                 pass
 
         openai_key = os.getenv("OPENAI_API_KEY")
-        if openai_key:
+        if openai_key and provider in {"auto", "openai"}:
             from langchain_openai import ChatOpenAI
-            _llm = ChatOpenAI(model="gpt-4o", temperature=0)
+            _llm = ChatOpenAI(
+                model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0
+            )
             return _llm
 
         raise RuntimeError(
-            "No supported LLM API key found. Set GROQ_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY."
+            f"No API key found for LLM_PROVIDER={provider!r}. Set the matching "
+            "GROQ_API_KEY, GEMINI_API_KEY, or OPENAI_API_KEY."
         )
     return _llm
 
@@ -115,7 +125,9 @@ def get_profile_namespace(user_id: str) -> tuple:
 
 
 def load_research_profile(
-    state: dict, config: Optional[dict] = None, store: Optional[BaseStore] = None
+    state: dict,
+    config: RunnableConfig | None = None,
+    store: Optional[BaseStore] = None,
 ) -> dict:
     """Node: đọc research profile từ store và đưa vào state.
 
@@ -163,7 +175,9 @@ def _format_profile_for_prompt(profile: dict) -> str:
 
 
 def save_research_profile(
-    state: dict, config: Optional[dict] = None, store: Optional[BaseStore] = None
+    state: dict,
+    config: RunnableConfig | None = None,
+    store: Optional[BaseStore] = None,
 ) -> dict:
     """Node: cập nhật profile sau khi hoàn thành 1 lần research.
 
@@ -192,7 +206,15 @@ def save_research_profile(
         current_profile.setdefault("past_topics", []).append(topic)
 
     updated_profile = {}
+    extraction_enabled = os.getenv("ENABLE_PROFILE_EXTRACTION", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     try:
+        if not extraction_enabled:
+            raise RuntimeError("LLM profile extraction is disabled")
+
         context = f"""
 Current profile: {current_profile}
 New research topic: {topic}

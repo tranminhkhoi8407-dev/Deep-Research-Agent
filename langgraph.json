@@ -6,6 +6,6 @@
   "python_version": "3.11",
   "dependencies": [
     ".",
-    "trustcall>=0.3"
+    "trustcall==0.0.39"
   ]
 }

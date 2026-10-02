@@ -1,7 +1,7 @@
 """Pydantic schemas cho API request/response."""
 
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 
@@ -10,12 +10,36 @@ class ResearchRequest(BaseModel):
     topic: str = Field(..., description="Chủ đề nghiên cứu")
     max_analysts: int = Field(default=3, ge=1, le=10, description="Số analyst song song")
     user_id: str = Field(default="default", description="User ID cho long-term memory")
+    report_language: Literal["vi", "en"] = Field(
+        default="vi", description="Ngôn ngữ của nội dung báo cáo"
+    )
+    research_depth: Literal["quick", "standard", "deep"] = Field(
+        default="standard", description="Mức độ sâu của pipeline nghiên cứu"
+    )
+    research_domain: str = Field(default="general", max_length=80)
+    research_category: str = Field(default="", max_length=120)
+    research_notes: str = Field(default="", max_length=10_000)
+    latex_context: str = Field(default="", max_length=4_000)
+    source_preferences: list[str] = Field(default_factory=list, max_length=12)
 
 
 class ResearchResponse(BaseModel):
     session_id: str
     status: str = "started"
     message: str = "Research started"
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Editable public profile fields; authentication identity stays provider-owned."""
+    # Omission keeps older profile clients compatible; an explicit empty/null
+    # name is never allowed to remove a reserved identity or bypass onboarding.
+    public_name: str | None = Field(default=None, max_length=120)
+    display_name: str = Field(default="", max_length=80)
+    bio: str = Field(default="", max_length=360)
+    location: str = Field(default="", max_length=80)
+    organization: str = Field(default="", max_length=120)
+    website: str = Field(default="", max_length=240)
+    research_interests: list[str] = Field(default_factory=list, max_length=8)
 
 
 class ReportResponse(BaseModel):
@@ -39,6 +63,11 @@ class WSResearchStart(BaseModel):
     max_analysts: int = 3
     user_id: str = "default"
     session_id: Optional[str] = None
+    research_domain: str = "general"
+    research_category: str = ""
+    research_notes: str = ""
+    latex_context: str = ""
+    source_preferences: list[str] = Field(default_factory=list, max_length=12)
 
 
 class WSNodeUpdate(BaseModel):
@@ -80,6 +109,9 @@ class WSReportComplete(BaseModel):
     event: str = "report_complete"
     final_report: str
     filepath: str
+    source_count: int = 0
+    research_depth: str = "standard"
+    audit_notes: Optional[str] = None
 
 
 class WSError(BaseModel):
@@ -98,3 +130,10 @@ class WSClientMessage(BaseModel):
     user_id: Optional[str] = None
     session_id: Optional[str] = None
     feedback: Optional[str] = None
+    report_language: Optional[Literal["vi", "en"]] = "vi"
+    research_depth: Optional[Literal["quick", "standard", "deep"]] = "standard"
+    research_domain: Optional[str] = Field(default="general", max_length=80)
+    research_category: Optional[str] = Field(default="", max_length=120)
+    research_notes: Optional[str] = Field(default="", max_length=10_000)
+    latex_context: Optional[str] = Field(default="", max_length=4_000)
+    source_preferences: list[str] = Field(default_factory=list, max_length=12)

@@ -6,6 +6,9 @@ langchain-google-genai>=2.0
 langchain-groq>=0.1.0
 langchain-tavily>=0.2
 python-dotenv>=1.0
+authlib>=1.3
+httpx>=0.27
+itsdangerous>=2.2
 wikipedia>=1.4.0
 
 # Cho SECOND_SOURCE="arxiv" trong agent/nodes.py (mặc định dùng wikipedia,
@@ -19,3 +22,6 @@ trustcall==0.0.39
 
 # Studio / langgraph dev (optional, cho phep mo LangGraph Studio local)
 langgraph-cli[inmem]>=0.1
+
+# Tests
+pytest>=8.0

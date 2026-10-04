@@ -1,0 +1,24 @@
+# Preview only: Render Free has an ephemeral filesystem. Do not use this
+# service for real accounts, notebooks, collaboration projects, or reports.
+services:
+  - type: web
+    name: nexora-api-preview
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: AUTH_DEV_LOGIN
+        value: "false"
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: AUTH_SESSION_SECRET
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+      - key: BACKEND_URL
+        value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+      - key: CORS_ORIGINS
+        value: https://deep-research-agent.tranminhkhoi8407.workers.dev

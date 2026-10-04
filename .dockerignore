@@ -28,6 +28,10 @@ build/
 
 # Reports (generated at runtime)
 reports/
+data/
+*.db
+*.sqlite
+*.sqlite3
 
 # Test
 .pytest_cache/

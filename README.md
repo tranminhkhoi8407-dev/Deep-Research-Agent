@@ -194,6 +194,30 @@ Chuyên sâu**, chọn số analyst rồi bấm **Bắt đầu nghiên cứu**. 
 duyệt** để chạy thẳng; tắt nó nếu muốn xem và góp ý cho nhóm analyst/các
 section trước khi hệ thống viết report.
 
+### Deploy frontend lên Cloudflare Workers
+
+Worker `deep-research-agent` hiện phục vụ **frontend tĩnh**; nó không chạy
+FastAPI/Python. Từ thư mục gốc project, chạy `npm ci`, sau đó `npm run build`
+để cài dependencies của frontend và tạo `frontend/dist`. Đăng nhập Wrangler
+một lần bằng `npx wrangler login`, rồi chạy `npm run deploy` để build và deploy
+theo `wrangler.jsonc`.
+
+Backend thử nghiệm đang chạy tại Render và Worker chuyển tiếp `/api/*`,
+`/ws/*`, `/health` qua `BACKEND_ORIGIN` trong `wrangler.jsonc`. Frontend dùng
+cùng domain với API nên không cần `VITE_API_BASE_URL`. Kiểm tra
+`https://deep-research-agent.tranminhkhoi8407.workers.dev/health` trước khi
+thử đăng nhập. `FRONTEND_URL`, `BACKEND_URL` và `CORS_ORIGINS` trên Render đều
+dùng chính xác domain Worker. OAuth callback tương ứng là
+`https://deep-research-agent.tranminhkhoi8407.workers.dev/api/auth/callback/google`
+hoặc `/github`. Không đặt OAuth secret hay API secret có tiền tố `VITE_`: các
+biến `VITE_*` được nhúng vào mã frontend. Hướng dẫn và giới hạn Render Free
+nằm trong [docs/render-deploy.md](docs/render-deploy.md).
+
+Nếu đăng nhập Wrangler qua trình duyệt gặp lỗi CSRF, có thể dùng API token
+Cloudflare được giới hạn quyền Workers Edit trong biến môi trường của terminal
+hiện tại (`CLOUDFLARE_API_TOKEN`, kèm `CLOUDFLARE_ACCOUNT_ID` nếu cần). Không
+commit token vào repository và không gửi token qua chat.
+
 ### Đăng nhập Google / GitHub
 
 Web app có trang đăng nhập riêng. Sau khi đăng nhập, header hiển thị avatar,

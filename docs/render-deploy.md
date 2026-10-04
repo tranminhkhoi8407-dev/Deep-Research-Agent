@@ -4,8 +4,9 @@ This is a **temporary test deployment**, not a durable home for user data.
 Render Free can sleep and restart; its local filesystem is ephemeral. This app
 currently stores accounts, notebooks, paper collections, and collaboration
 state in SQLite, and reports in local files. Those records can disappear after
-a restart or redeploy. Do not invite real users or connect the public frontend
-until durable storage and backups are in place.
+a restart or redeploy. The public frontend is connected only to verify API
+reachability; do not invite real users or store real data until durable storage
+and backups are in place.
 
 ## Create the backend
 
@@ -20,7 +21,7 @@ until durable storage and backups are in place.
 4. Add the non-secret variables from `render.yaml`. Generate a new long random
    value for `AUTH_SESSION_SECRET` in the Render dashboard. Never commit it.
    If creating from the Blueprint instead, Render generates it automatically.
-5. Deploy and wait for **Live**. Open `https://<service>.onrender.com/health`;
+5. Deploy and wait for **Live**. Open `https://nexora-api-preview.onrender.com/health`;
    it should return `{"status":"ok","service":"deep-research-agent"}`.
 
 The Blueprint file is provided for repeatable configuration. Manual Web
@@ -36,9 +37,10 @@ variables automatically; enter them in the service's Environment page.
 - Add `GEMINI_API_KEY` (or another supported model provider) and
   `TAVILY_API_KEY` for research. Never put secret values in `VITE_*` variables,
   Git, or the frontend.
-- Set Cloudflare Worker's `BACKEND_ORIGIN` to the Render service's HTTPS origin
-  and redeploy the Worker. The frontend currently uses same-origin `/api`,
-  `/ws`, and `/health`; merely running the Render backend does not connect it.
+- The Cloudflare Worker is configured with
+  `BACKEND_ORIGIN=https://nexora-api-preview.onrender.com`. It forwards
+  same-origin `/api`, `/ws`, and `/health` to Render. Verify
+  `https://deep-research-agent.tranminhkhoi8407.workers.dev/health` returns OK.
 - Before production use, migrate SQLite and report storage to a persistent
   service or a Render paid persistent disk, add backups, and test OAuth and
   WebSocket through the Worker domain. Do not rely on Render Free's filesystem.

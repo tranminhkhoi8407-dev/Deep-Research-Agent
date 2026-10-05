@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { profileCompletionFromHash, profileSetupHash, type ProfileCompletion } from './profileNavigation';
+import { fieldRoute } from './fieldNavigation';
 import {
   AlertCircle,
   ArrowRight,
@@ -59,8 +60,8 @@ import {
   type InformationView,
 } from "./InformationPages";
 
-const DomainHub = lazy(() =>
-  import("./DomainHub").then((module) => ({ default: module.DomainHub })),
+const FieldsPage = lazy(() =>
+  import("./FieldWorkspace").then((module) => ({ default: module.FieldsPage })),
 );
 const GuidedTour = lazy(() =>
   import("./GuidedTour").then((module) => ({ default: module.GuidedTour })),
@@ -80,7 +81,9 @@ const CollaborationHub = lazy(() =>
 
 function routedViewFromHash(
   hash = window.location.hash,
-): "guide" | "pricing" | "profile" | "collab" | null {
+): "guide" | "pricing" | "profile" | "collab" | "domains" | "reports" | null {
+  if (hash === '#/library') return 'reports';
+  if (/^#\/fields(?:\/|$)/.test(hash)) return "domains";
   if (/^#\/guide(?:\/|$)/.test(hash)) return "guide";
   if (/^#\/pricing(?:\/|$)/.test(hash)) return "pricing";
   if (/^#\/profile(?:\/|\?|$)/.test(hash)) return "profile";
@@ -531,6 +534,7 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>(
     () => routedViewFromHash() || "overview",
   );
+  const [routeHash, setRouteHash] = useState(window.location.hash);
   const [informationView, setInformationView] =
     useState<InformationView | null>(() => informationViewFromHash());
   const [topic, setTopic] = useState("");
@@ -637,6 +641,7 @@ export default function App() {
 
   useEffect(() => {
     const syncRoute = () => {
+      setRouteHash(window.location.hash);
       const infoView = informationViewFromHash();
       setInformationView(infoView);
       const routedView = routedViewFromHash();
@@ -644,7 +649,7 @@ export default function App() {
       if (routedView) setActiveView(routedView);
       else if (!infoView)
         setActiveView((current) =>
-          current === "guide" || current === "pricing" || current === "profile" || current === "collab"
+          current === "guide" || current === "pricing" || current === "profile" || current === "collab" || current === "domains"
             ? "overview"
             : current,
         );
@@ -658,7 +663,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !authUser || authUser.public_name?.trim() || activeView !== 'collab' || informationView) return;
+    // Preferences stay consistent when a field is open in a separate tab.
+    const syncPreferences = (event: StorageEvent) => {
+      if (event.key === 'deep-research-appearance') setAppearance(event.newValue === 'light' || event.newValue === 'dark' ? event.newValue : 'system');
+      if (event.key === 'deep-research-language') setLanguage(event.newValue === 'vi' ? 'vi' : 'en');
+    };
+    window.addEventListener('storage', syncPreferences);
+    return () => window.removeEventListener('storage', syncPreferences);
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !authUser || authUser.public_name?.trim() || !['collab', 'domains'].includes(activeView) || informationView) return;
     const setupHash = profileSetupHash({ returnHash: window.location.hash || '#/collab', field: collabField });
     const request = profileCompletionFromHash(setupHash);
     setProfileCompletion(request);
@@ -845,7 +860,8 @@ export default function App() {
   };
 
   const navigateTo = (view: AppView) => {
-    if (view === activeView && !informationView) return;
+    if (view === 'domains' && activeView === 'domains' && !informationView) { window.location.hash = '#/fields'; return; }
+    if (view === activeView && !informationView && !(view === 'domains' && window.location.hash !== '#/fields')) return;
     const changeView = () => {
       setProfileCompletion(null);
       setProfileEditRequest(0);
@@ -855,8 +871,9 @@ export default function App() {
       const route =
         view === "guide" || view === "pricing" || view === "profile" || view === "collab"
           ? `${window.location.pathname}#/${view}`
-          : window.location.pathname;
+          : view === 'domains' ? `${window.location.pathname}#/fields` : window.location.pathname;
       window.history.pushState({}, "", route);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const motionAllowed = !window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -878,6 +895,7 @@ export default function App() {
       setProfileEditRequest(0);
       setInformationView(view);
       window.history.pushState({}, "", `${window.location.pathname}#/${view}`);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const motionAllowed = !window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -899,6 +917,7 @@ export default function App() {
     setActiveView('profile');
     setProfileEditRequest((value) => value + 1);
     window.history.pushState({}, '', `${window.location.pathname}#/profile`);
+    setRouteHash(window.location.hash);
     window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
@@ -906,6 +925,7 @@ export default function App() {
     const changeView = () => {
       setInformationView(null);
       window.history.pushState({}, "", window.location.pathname);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const transitionDocument = document as Document & {
@@ -1304,9 +1324,11 @@ export default function App() {
     );
   }
 
+  const standaloneField = activeView === 'domains' && !informationView && (!!fieldRoute(routeHash) || routeHash === '#/fields/guide');
   return (
-    <div className="app-shell app-shell--ready">
+    <div className={`app-shell app-shell--ready${standaloneField ? ' app-shell--field' : ''}`}>
       {showWelcome && <WelcomeTransition user={authUser} language={language} />}
+      {!standaloneField && <>
       <header className="topbar">
         <button
           className="brand brand-button"
@@ -1360,6 +1382,7 @@ export default function App() {
         reportCount={storedReports.length}
         onNavigate={(view) => { if (view === 'collab') setCollabField(null); navigateTo(view); }}
       />
+      </>}
 
       {informationView ? (
         <main
@@ -1452,9 +1475,10 @@ export default function App() {
                 setAuthUser(updated);
                 if (profileCompletion && updated.public_name?.trim()) {
                   setCollabField(profileCompletion.field);
-                  setActiveView('collab');
+                  setActiveView(profileCompletion.returnHash.startsWith('#/fields') ? 'domains' : 'collab');
                   setInformationView(null);
                   window.history.replaceState({}, '', `${window.location.pathname}${profileCompletion.returnHash}`);
+                  setRouteHash(window.location.hash);
                   setProfileCompletion(null);
                   setProfileEditRequest(0);
                   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2000,7 +2024,7 @@ export default function App() {
           </section>
         </main>
       ) : activeView === "domains" ? (
-        <main className="product-page domain-page view-enter" key="domains">
+        <main className="product-page fields-page-shell" key="domains">
           <Suspense
             fallback={
               <div className="domain-loading" role="status">
@@ -2013,10 +2037,17 @@ export default function App() {
               </div>
             }
           >
-            <DomainHub
+            <FieldsPage
+              apiBase={API_BASE}
+              user={authUser}
+              reports={storedReports}
               language={language}
-              onStartResearch={openDomainResearch}
-              onOpenNotebook={(field) => { setCollabField(field); navigateTo('collab'); }}
+              onPrepareResearch={openDomainResearch}
+              appearance={appearance}
+              onAppearanceChange={setAppearance}
+              onLanguageChange={setLanguage}
+              onOpenTour={() => setTourRequest('fields')}
+              onLogout={() => void logout()}
             />
           </Suspense>
         </main>
@@ -2081,12 +2112,12 @@ export default function App() {
         </main>
       )}
 
-      <AppFooter
+      {!standaloneField && <AppFooter
         language={language}
         health={health}
         onNavigate={navigateTo}
         onNavigateInformation={navigateToInformation}
-      />
+      />}
 
       {!informationView && <Suspense fallback={null}><GuidedTour
         apiBase={API_BASE}
@@ -2098,6 +2129,7 @@ export default function App() {
         clearRequest={() => setTourRequest(null)}
         onNavigate={navigateTo}
         onResetLibrary={() => setLibraryTourReset((value) => value + 1)}
+        hideLauncher={standaloneField}
       /></Suspense>}
 
       {notice && (

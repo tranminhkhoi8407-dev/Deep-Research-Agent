@@ -78,7 +78,7 @@ interface DomainDefinition {
   latexPresets: { label: string; value: string }[];
 }
 
-const domains: DomainDefinition[] = [
+export const domains: DomainDefinition[] = [
   {
     id: 'mathematics', icon: Sigma, shortCode: 'MATH',
     vi: {

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { consumeFieldTour, handoffParameter, stageFieldTour, withoutTourHandoff } from './tourHandoff';
 import { ArrowLeft, ArrowRight, BookOpenCheck, Check, Compass, HelpCircle, Pause, Play, RotateCcw, ShieldCheck, X } from 'lucide-react';
 import type { AuthUser } from './Auth';
 import type { AppView, Language } from './ProductViews';
+import { fieldRoute } from './fieldNavigation';
 import './GuidedTour.css';
 
 export type TourId = 'core' | 'research' | 'fields' | 'library' | 'host';
@@ -50,13 +52,13 @@ const tours: Record<TourId, TourDefinition> = {
     ],
   },
   fields: {
-    name: c('Bộ công cụ theo lĩnh vực', 'Field-specific toolkit'),
-    summary: c('Chọn category, thử LaTeX và dùng notebook.', 'Choose a category, preview LaTeX, and use the notebook.'),
+    name: c('Không gian nghiên cứu theo lĩnh vực', 'Field research workspaces'),
+    summary: c('Tạo cây trang, viết theo khối và tổ chức nghiên cứu.', 'Build a page tree, write in blocks, and organize research.'),
     steps: [
-      { view: 'domains', target: 'field-picker', title: c('Chọn một lĩnh vực', 'Choose a discipline'), body: c('Mỗi lĩnh vực có quy trình và nhóm nguồn phù hợp. Chuyển tab để xem sự khác biệt.', 'Each discipline has tailored methods and source lanes. Switch tabs to compare them.') },
-      { view: 'domains', target: 'field-categories', title: c('Thu hẹp thành category', 'Narrow to a category'), body: c('Category giúp brief cụ thể hơn và đi cùng lĩnh vực khi bạn mở Research.', 'Categories make a brief more precise and carry into Research when you choose to start.') },
-      { view: 'domains', target: 'field-latex', title: c('Viết và xem trước LaTeX', 'Write and preview LaTeX'), body: c('Thử công thức mẫu, xem bản render, sao chép hoặc tải .tex. Bản nháp được lưu cục bộ trên trình duyệt này.', 'Try a formula preset, preview the rendering, copy it, or download .tex. Drafts are saved locally in this browser.') },
-      { view: 'domains', target: 'field-notes', title: c('Notebook riêng từng lĩnh vực', 'A notebook for each field'), body: c('Ghi giả thuyết, paper cần đọc và phản biện. Ghi chú không được xem là nguồn đã kiểm chứng; chỉ gửi vào Research nếu bạn chọn đính kèm.', 'Capture hypotheses, papers to read, and counterarguments. Notes are not verified evidence and are sent to Research only when you attach them.') },
+      { view: 'domains', target: 'field-picker', title: c('Mở không gian của bạn', 'Open your own workspace'), body: c('Chọn một thẻ để chuyển sang trang editor ngay trong tab hiện tại. Tour sẽ tiếp tục khi workspace sẵn sàng. Lần đầu mở sẽ tạo notebook riêng cho lĩnh vực đó.', 'Choose a card to navigate to the editor in this tab. The tour continues when your workspace is ready. Your first visit creates a personal field notebook.'), clickToAdvance: true },
+      { view: 'domains', target: 'field-tree', title: c('Cây trang nhiều cấp', 'A tree of ideas'), body: c('Dấu + tạo trang con. Kéo một trang vào trang khác để lồng cấp, hoặc dùng “Chuyển vào trang” trong menu trang. Trang lưu trữ có thể khôi phục.', 'Use + to create subpages. Drag a page onto another to nest it, or choose Move into page from the page menu. Archived branches can be restored.') },
+      { view: 'domains', target: 'field-writing', title: c('Không gian viết theo khối', 'Your block-based writing space'), body: c('Gõ / hoặc bấm + cạnh dòng để thêm khối; bấm ⋮⋮ để đổi loại, màu hay nhân bản. Gõ $$công thức$$ để tạo công thức trong dòng, hoặc /math để thêm Block equation ở giữa trang. Chờ “Đã đồng bộ” trước khi đóng.', 'Type / or use + beside a line to add blocks; use ⋮⋮ to turn into another type, color, or duplicate. Type $$formula$$ for inline math, or /math for a centered Block equation. Wait for All changes synced before closing.') },
+      { view: 'domains', target: 'field-guide', title: c('Tra cứu editor & công thức', 'Editor & formula reference'), body: c('Mở hướng dẫn ở sidebar để xem thao tác viết khối và 65 mẫu LaTeX: 15 cú pháp cơ bản, mỗi lĩnh vực 10 mẫu. Bạn có thể xem trước và sao chép mã để dùng trong trang.', 'Open the sidebar guide for block editing and 65 LaTeX examples: 15 basics and 10 per field. Preview and copy the source into your page.') },
     ],
   },
   library: {
@@ -118,9 +120,10 @@ interface Props {
   clearRequest: () => void;
   onNavigate: (view: AppView) => void;
   onResetLibrary: () => void;
+  hideLauncher?: boolean;
 }
 
-export function GuidedTour({ apiBase, user, language, activeView, showWelcome, request, clearRequest, onNavigate, onResetLibrary }: Props) {
+export function GuidedTour({ apiBase, user, language, activeView, showWelcome, request, clearRequest, onNavigate, onResetLibrary, hideLauncher = false }: Props) {
   const t = labels[language];
   const [progress, setProgress] = useState<Record<string, TourProgress>>({});
   const progressRef = useRef<Record<string, TourProgress>>({});
@@ -132,11 +135,13 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
   const [box, setBox] = useState<Box | null>(null);
   const [missing, setMissing] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
+  const [cardHeight, setCardHeight] = useState(400);
   const dialogRef = useRef<HTMLDivElement>(null);
   const promptHandled = useRef(false);
   const pendingView = useRef<AppView | null>(null);
   const pendingWrites = useRef<Record<string, Promise<void>>>({});
   const activeRef = useRef<ActiveTour | null>(null);
+  const handoffHandled = useRef(false);
   activeRef.current = active;
 
   const tourOpen = Boolean(active || catalog || invitation);
@@ -242,6 +247,10 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
     // A paper's field selection lives in the Library UI, not in tour progress.
     // Resume at the choice instead of pointing at a detail pane that is no longer open.
     if (id === 'library' && index >= 2) index = 1;
+    if (id === 'fields') {
+      if (fieldRoute(window.location.hash)) index = Math.max(1, index);
+      else { index = 0; window.location.hash = '#/fields'; }
+    }
     setInvitation(false);
     setCatalog(false);
     setActive({ id, index });
@@ -250,6 +259,22 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
     const view = tours[id].steps[index].view;
     requestView(view);
   };
+
+  useEffect(() => {
+    if (!loaded || handoffHandled.current) return;
+    const url = new URL(window.location.href);
+    const route = fieldRoute(url.hash);
+    if (!route || !url.searchParams.has(handoffParameter)) return;
+    handoffHandled.current = true;
+    let intent: ReturnType<typeof consumeFieldTour> = null;
+    try { intent = consumeFieldTour(url, user.id, route.field, window.localStorage); } catch { setSyncWarning(true); }
+    window.history.replaceState(window.history.state, '', withoutTourHandoff(url));
+    if (!intent) return;
+    setInvitation(false); setCatalog(false); setMissing(false); setBox(null);
+    setActive({ id: 'fields', index: intent.step });
+    persist('fields', intent.step, 'in_progress');
+    requestView('domains');
+  }, [loaded, user.id]);
 
   useEffect(() => {
     if (!loaded || !request) return;
@@ -273,6 +298,7 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
     if (nextIndex >= steps.length) { persist(active.id, steps.length, 'completed'); setActive(null); setCatalog(true); return; }
     const index = Math.max(0, nextIndex);
     if (active.id === 'library' && active.index >= 2 && index <= 1) onResetLibrary();
+    if (active.id === 'fields' && index === 0) window.location.hash = '#/fields';
     setActive({ ...active, index });
     setBox(null);
     setMissing(false);
@@ -285,8 +311,18 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
   const step = active ? tours[active.id].steps[active.index] : null;
 
   useEffect(() => {
+    if (!active || !dialogRef.current) return;
+    const card = dialogRef.current;
+    const observer = new ResizeObserver(() => setCardHeight(card.getBoundingClientRect().height));
+    observer.observe(card);
+    setCardHeight(card.getBoundingClientRect().height);
+    return () => observer.disconnect();
+  }, [active?.id, active?.index, language, syncWarning, missing]);
+
+  useEffect(() => {
     if (!active || !step) return;
     if (activeView !== step.view) { requestView(step.view); return; }
+    if (active.id === 'fields') window.dispatchEvent(new CustomEvent('nexora:field-tour-target', { detail: step.target }));
     let frame = 0;
     let target: HTMLElement | null = null;
     let resizeObserver: ResizeObserver | null = null;
@@ -296,6 +332,8 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
       if (!found) { target = null; setBox(null); return; }
       if (found !== target) {
         target = found;
+        // The workspace can mount after the tour (API loading / lazy import).
+        if (active.id === 'fields') window.dispatchEvent(new CustomEvent('nexora:field-tour-target', { detail: step.target }));
         resizeObserver?.disconnect();
         resizeObserver = new ResizeObserver(() => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(update); });
         resizeObserver.observe(found);
@@ -307,24 +345,42 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
     };
     const observe = new MutationObserver(() => { if (!target || !target.isConnected) update(); });
     observe.observe(document.body, { childList: true, subtree: true });
-    const timeout = window.setTimeout(() => { if (!target?.isConnected) { setMissing(true); setBox(null); } }, 6000);
+    const timeout = window.setTimeout(() => { if (!target?.isConnected) { setMissing(true); setBox(null); } }, active.id === 'fields' ? 20000 : 6000);
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
+    document.addEventListener('transitionend', update, true);
     update();
-    return () => { observe.disconnect(); resizeObserver?.disconnect(); window.clearTimeout(timeout); window.cancelAnimationFrame(frame); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+    return () => { observe.disconnect(); resizeObserver?.disconnect(); window.clearTimeout(timeout); window.cancelAnimationFrame(frame); window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); document.removeEventListener('transitionend', update, true); };
   }, [active?.id, active?.index, activeView, retryTick]);
 
   useEffect(() => {
     if (!active || !step?.clickToAdvance || activeView !== step.view) return;
     const onClick = (event: MouseEvent) => {
+      if (event.type === 'auxclick' && event.button !== 1) return;
       const target = document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`);
       if (!target?.contains(event.target as Node)) return;
       if (step.target === 'library-fields' && !(event.target as Element).closest('button')) return;
+      if (step.target === 'field-picker' && !(event.target as Element).closest('a')) return;
+      const link = (event.target as Element).closest('a');
+      if (step.target === 'field-picker' && link && (link.getAttribute('target') === '_blank' || event.ctrlKey || event.metaKey || event.type === 'auxclick')) {
+        const destination = new URL(link.href);
+        const route = fieldRoute(destination.hash);
+        if (!route || destination.origin !== window.location.origin) return;
+        const previousHref = link.href;
+        try {
+          link.href = stageFieldTour(destination, user.id, route.field, crypto.randomUUID(), window.localStorage);
+        } catch { setSyncWarning(true); return; }
+        // Change href synchronously before the browser's normal new-tab action.
+        // Restore it afterwards so future non-tour clicks remain ordinary links.
+        window.setTimeout(() => { link.href = previousHref; }, 0);
+        persist(active.id, active.index + 1, 'in_progress'); setActive(null); setBox(null); return;
+      }
       if (step.target === 'nav-research') pendingView.current = 'research';
       window.setTimeout(() => { if (activeRef.current?.id === active.id && activeRef.current.index === active.index) move(1); }, 0);
     };
     document.addEventListener('click', onClick, true);
-    return () => document.removeEventListener('click', onClick, true);
+    document.addEventListener('auxclick', onClick, true);
+    return () => { document.removeEventListener('click', onClick, true); document.removeEventListener('auxclick', onClick, true); };
   }, [active?.id, active?.index, activeView]);
 
   useEffect(() => {
@@ -363,7 +419,7 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
   const cardPosition = (() => {
     if (!visibleInset) return {};
     const width = Math.min(390, window.innerWidth - 28);
-    const height = 260;
+    const height = Math.min(cardHeight, window.innerHeight - 28);
     if (window.innerWidth < 700) return {};
     if (visibleInset.right + width + 20 < window.innerWidth) return { top: Math.max(14, Math.min(visibleInset.top, window.innerHeight - height - 14)), left: visibleInset.right + 14 };
     if (visibleInset.left - width - 20 > 0) return { top: Math.max(14, Math.min(visibleInset.top, window.innerHeight - height - 14)), left: visibleInset.left - width - 14 };
@@ -373,7 +429,7 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
   })();
 
   return <>
-    {loaded && !active && !catalog && !invitation && currentViewTour && <button type="button" className="tour-help-button" onClick={() => start(currentViewTour)}><HelpCircle size={18} />{t.help}</button>}
+    {!hideLauncher && loaded && !active && !catalog && !invitation && currentViewTour && <button type="button" className="tour-help-button" onClick={() => start(currentViewTour)}><HelpCircle size={18} />{t.help}</button>}
     {(invitation || catalog || active) && createPortal(<div className="tour-layer">
       {active ? <>
         {visibleInset ? <>
@@ -390,7 +446,7 @@ export function GuidedTour({ apiBase, user, language, activeView, showWelcome, r
           <h2 id="tour-step-title">{step?.title[language]}</h2>
           <p id="tour-step-body">{missing ? t.unavailable : step?.body[language]}</p>
           {syncWarning && <p className="tour-sync-note">{t.syncWarning}</p>}
-          <div className="tour-card__actions"><button type="button" className="tour-text-button" onClick={skip}>{t.skip}</button><div><button type="button" className="tour-back" disabled={active.index === 0} onClick={() => move(-1)}><ArrowLeft size={15} />{t.back}</button>{step?.clickToAdvance && !missing ? <button type="button" className="tour-next" onClick={() => { const target = document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`); const control = step.target === 'library-fields' ? target?.querySelector<HTMLElement>('button') : target; control?.focus(); if (step.target === 'nav-research') control?.click(); }}>{step.target === 'library-fields' ? t.choose : t.next}<ArrowRight size={15} /></button> : <button type="button" className="tour-next" onClick={() => move(1)}>{active.index === tours[active.id].steps.length - 1 ? t.finish : t.next}<ArrowRight size={15} /></button>}</div></div>
+          <div className="tour-card__actions"><button type="button" className="tour-text-button" onClick={skip}>{t.skip}</button><div><button type="button" className="tour-back" disabled={active.index === 0} onClick={() => move(-1)}><ArrowLeft size={15} />{t.back}</button>{step?.clickToAdvance && !missing ? <button type="button" className="tour-next" onClick={() => { const target = document.querySelector<HTMLElement>(`[data-tour="${step.target}"]`); const control = step.target === 'library-fields' ? target?.querySelector<HTMLElement>('button') : step.target === 'field-picker' ? target?.querySelector<HTMLElement>('a') : target; control?.focus(); if (step.target === 'nav-research') control?.click(); }}>{['library-fields', 'field-picker'].includes(step.target) ? t.choose : t.next}<ArrowRight size={15} /></button> : <button type="button" className="tour-next" onClick={() => move(1)}>{active.index === tours[active.id].steps.length - 1 ? t.finish : t.next}<ArrowRight size={15} /></button>}</div></div>
           {missing && <button type="button" className="tour-retry" onClick={() => { setMissing(false); setRetryTick((value) => value + 1); }}>{t.retry}</button>}
         </div>
       </> : <>

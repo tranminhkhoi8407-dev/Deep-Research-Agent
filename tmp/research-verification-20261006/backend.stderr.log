@@ -1,0 +1,245 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\Admin\\Desktop\\deep-research-agent\\agent', 'C:\\Users\\Admin\\Desktop\\deep-research-agent\\backend']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [6220] using WatchFiles
+INFO:     Started server process [22268]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'agent\deep_research.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [22268]
+INFO:     Started server process [43188]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'agent\deep_research.py', 'agent\model_output.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [43188]
+INFO:     Started server process [13804]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:51032 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use of AFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:49638 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:58919 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:51230 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54599 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54837 - "WebSocket /api/collab/pages/b545413577ae486bbce112e0b79fb066/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50263 - "WebSocket /api/collab/pages/b545413577ae486bbce112e0b79fb066/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:49798 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63798 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54497 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57277 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56016 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:61782 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:51028 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53769 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60934 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:62464 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60609 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53956 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60237 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:61847 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:65462 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64042 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58108 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:51975 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56556 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63542 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:62969 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:62709 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50436 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60301 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53581 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64937 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55477 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59548 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:51653 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53797 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59620 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52323 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:59971 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60775 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64214 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:49741 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52066 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52179 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64548 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50858 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57568 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56321 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63904 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57093 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54481 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56910 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63048 - "WebSocket /api/collab/pages/c3336382161c4f189de72ba5e461c963/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:62690 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:54375 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:50104 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:55985 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:62305 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:61720 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:61304 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:57426 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:62322 - "WebSocket /ws/research" [accepted]
+INFO:     connection open
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+C:\Users\Admin\Desktop\deep-research-agent\.venv\Lib\site-packages\langchain_google_genai\chat_models.py:3908: UserWarning: Model 'gemini-3.5-flash-lite' uses fixed sampling defaults; the sampling parameter(s) temperature will be ignored.
+  request = self._build_request_config(
+INFO:     127.0.0.1:64516 - "WebSocket /api/collab/pages/498d9dce27994918b9ed8b94be6d5a81/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57944 - "WebSocket /api/collab/pages/498d9dce27994918b9ed8b94be6d5a81/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60145 - "WebSocket /api/collab/pages/eaa507509c5049e3a6f7f1d1975ef1ed/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57050 - "WebSocket /api/collab/pages/eaa507509c5049e3a6f7f1d1975ef1ed/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63906 - "WebSocket /api/collab/pages/498d9dce27994918b9ed8b94be6d5a81/live" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55316 - "WebSocket /api/collab/pages/498d9dce27994918b9ed8b94be6d5a81/live" [accepted]
+INFO:     connection open

@@ -63,6 +63,14 @@ Research Notebook mới nằm trên server. Việc lưu trữ không xóa vĩnh 
 
 Chạy local bằng `run-app.ps1` hoặc khởi động backend và Vite riêng; Vite cần
 proxy WebSocket cho đường `/api` (đã cấu hình trong `frontend/vite.config.ts`).
+Trên Windows, launcher kiểm tra đúng thư mục làm việc và loại tiến trình trước
+khi dừng server cũ; xử lý cả worker Python còn giữ socket sau khi reloader cha
+đã thoát và Vite được chạy bằng đường dẫn tương đối. Không dừng ứng dụng khác
+chỉ vì đang giữ cổng. Cài `backend/requirements.txt` để có dependency kiểm tra
+tiến trình. Dùng `./run-app.ps1 -CheckOnly` để kiểm tra mà không dừng server;
+`-NoBrowser` để chạy mà không tự mở trình duyệt. Không chạy hai launcher đồng
+thời; nếu cổng thuộc dự án khác hoặc không xác minh được, launcher sẽ dừng và
+báo lỗi cụ thể. Việc khởi động lại sẽ ngắt các phiên đang chạy trên server cũ.
 Khi triển khai production cần HTTPS/WSS, `AUTH_SESSION_SECRET` mạnh,
 `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS` chính xác, backup định kỳ và quy định
 giữ/xóa dữ liệu của host. Thiết kế hiện tại phù hợp một host SQLite với số

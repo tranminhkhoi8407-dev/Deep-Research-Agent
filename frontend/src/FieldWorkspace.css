@@ -38,7 +38,7 @@
 .field-gallery__foot a { color: var(--blue); }
 .field-legacy { padding: 25px; }
 .field-legacy > button { display: flex; align-items: center; gap: 8px; padding: 10px 15px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 8px; }
-.field-notebook { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100dvh; min-height: 0; background: var(--surface); --notebook-tint: color-mix(in srgb, var(--field-accent) 12%, var(--surface)); animation: field-enter .28s ease-out; }
+.field-notebook { display: grid; position: relative; grid-template-columns: var(--field-sidebar-width,270px) minmax(0, 1fr); height: 100dvh; min-height: 0; background: var(--surface); --notebook-tint: color-mix(in srgb, var(--field-accent) 12%, var(--surface)); animation: field-enter .28s ease-out; }
 @keyframes field-enter { from { opacity: .55; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 .field-notebook *, .field-gallery * { box-sizing: border-box; }
 .field-notebook button, .field-notebook input, .field-notebook select { font: inherit; }
@@ -79,6 +79,23 @@
 .field-tree-row button:disabled { opacity: 0; }
 .field-page-icon { min-width: 18px; display: inline-flex; justify-content: center; }
 .field-tree-add { margin-left: auto; }
+.field-tree-menu { position: relative; flex: none; }
+.field-tree-menu > summary { display: grid; place-items: center; width: 23px; height: 27px; list-style: none; cursor: pointer; color: var(--muted); opacity: 0; border-radius: 4px; }
+.field-tree-row:hover .field-tree-menu > summary, .field-tree-row:focus-within .field-tree-menu > summary, .field-tree-menu[open] > summary { opacity: 1; }
+.field-tree-menu > summary:hover { background: var(--line); }
+.field-tree-menu > div { position: absolute; top: 100%; right: -20px; z-index: 45; width: 200px; padding: 5px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); box-shadow: 0 8px 25px #0005; }
+.field-tree-menu > div button { display: flex; width: 100%; padding: 8px; text-align: left; color: var(--ink); font-size: 12px; border-radius: 4px; }
+.field-tree-menu > div button:hover { background: var(--surface-soft); }
+.field-side-peek { position: absolute; inset: 0 0 0 auto; z-index: 50; width: min(680px, calc(100% - 50px)); background: var(--surface); box-shadow: -12px 0 50px #0004; border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+.field-side-peek > header { display: flex; justify-content: space-between; align-items: center; min-height: 55px; padding: 10px 20px; border-bottom: 1px solid var(--line); }
+.field-side-peek > header a { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+.field-side-peek > header button { display: grid; place-items: center; padding: 6px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.field-side-peek > div { overflow-y: auto; flex: 1; }
+.field-side-peek .field-editor .collab-page__main { padding: 0 24px; }
+.field-side-peek .field-editor.with-inspector .collab-page__grid { grid-template-columns: minmax(0, 1fr); }
+.field-side-peek .field-editor .collab-page__side { position: static; margin: 15px; max-height: none; }
+.field-dialog-icons { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+.field-dialog-icons button { display: grid; place-items: center; }
 .field-shortcuts a { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; padding: 7px 9px; border-radius: 5px; overflow-wrap: anywhere; }
 .field-shortcuts svg { flex-shrink: 0; }
 .field-sidebar-bottom { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -126,7 +143,7 @@
 .field-editor .collab-page__title { border: 0; background: transparent; padding: 6px 0; width: 100%; font-size: clamp(28px, 3.2vw, 43px); font-weight: 750; letter-spacing: -.035em; border-radius: 0; color: var(--ink); margin: 14px 0 4px; }
 .field-editor .collab-page__meta { font-size: 11px; margin: 0 0 22px; color: var(--muted); }
 .field-editor .collab-editor { border: 0; background: var(--surface); border-radius: 0; }
-.field-editor .collab-editor__status { background: var(--surface); color: var(--muted); font-size: 11px; border: 0; padding: 4px 0; }
+.field-editor .collab-editor__status { display: none; }
 .field-editor .bn-editor { min-height: 130px; padding: 18px 12px 24px 32px; font-size: 16px; line-height: 1.65; }
 .field-editor .notebook-block-editor .bn-container { --bn-colors-editor-background: var(--surface); --bn-colors-editor-text: var(--ink); }
 .field-editor .collab-editor__presence { background: var(--notebook-tint); color: var(--ink); }
@@ -190,13 +207,22 @@
 .field-dialog button { padding: 9px 13px; border: 1px solid var(--line); background: var(--surface-soft); color: var(--ink); border-radius: 7px; }
 .field-dialog .field-primary { color: #fff; background: #2862d6; border-color: #2862d6; }
 .field-mobile-menu, .field-sidebar-scrim { display: none; }
+.notebook-sidebar-edge { position: absolute; top: 0; bottom: 0; left: calc(var(--field-sidebar-width,270px) - 4px); width: 8px; z-index: 35; cursor: col-resize; touch-action: none; user-select: none; outline: none; }
+.notebook-sidebar-edge::before { content: ''; position: absolute; width: 2px; inset: 0 auto 0 3px; background: transparent; transition: background .12s; }
+.notebook-sidebar-edge:hover::before, .notebook-sidebar-edge:focus-visible::before, .notebook-sidebar-edge.is-dragging::before { background: var(--blue); }
+.notebook-sidebar-edge-tip { position: absolute; top: min(220px,35vh); left: 12px; min-width: 175px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); color: var(--muted); box-shadow: 0 4px 16px #0003; font-size: 11px; white-space: nowrap; opacity: 0; visibility: hidden; pointer-events: none; }
+.notebook-sidebar-edge:hover .notebook-sidebar-edge-tip, .notebook-sidebar-edge:focus-visible .notebook-sidebar-edge-tip { opacity: 1; visibility: visible; transition-delay: .4s; }
+.notebook-sidebar-edge.is-dragging .notebook-sidebar-edge-tip { visibility: hidden; }
+.field-notebook:has(.notebook-sidebar-edge.is-dragging) { user-select: none; cursor: col-resize; }
+.sidebar-collapsed .notebook-sidebar-edge { display: none; }
 @media (min-width: 781px) { .field-notebook.sidebar-collapsed { grid-template-columns: minmax(0, 1fr); } .sidebar-collapsed .field-notebook__sidebar { display: none; } .sidebar-collapsed .field-mobile-menu { display: flex; } }
 @media (min-width: 1600px) { .field-gallery__grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } .field-entry__body { padding: 20px; } .field-entry h3 { font-size: 21px; min-height: 50px; } }
-@media (max-width: 1150px) { .field-notebook { grid-template-columns: 240px minmax(0, 1fr); } .field-editor.with-inspector .collab-page__grid { grid-template-columns: minmax(0, 1fr); } .field-editor .collab-page__side { position: static; max-height: none; margin: 25px 30px; } .field-editor .collab-page__main { padding: 0 30px; } }
+@media (max-width: 1150px) { .field-editor.with-inspector .collab-page__grid { grid-template-columns: minmax(0, 1fr); } .field-editor .collab-page__side { position: static; max-height: none; margin: 25px 30px; } .field-editor .collab-page__main { padding: 0 30px; } }
 @media (max-width: 780px) {
+  .notebook-sidebar-edge { display: none; }
   .field-gallery { padding: 35px 20px; } .field-gallery__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; } .field-gallery__foot { align-items: flex-start; flex-direction: column; }
   .field-notebook { display: block; height: 100dvh; min-height: 0; }
-  .field-notebook__sidebar { position: fixed; inset: 0 auto 0 0; z-index: 105; width: 280px; transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility .2s; }
+  .field-notebook__sidebar { position: fixed; inset: 0 auto 0 0; z-index: 105; width: min(280px,calc(100vw - 35px)); transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility .2s; }
   .field-notebook.sidebar-open .field-notebook__sidebar { transform: none; visibility: visible; }
   .field-notebook__canvas { height: 100%; }
   .field-sidebar-scrim { display: block; position: fixed; inset: 0; z-index: 104; border: 0; background: #070f2588; }

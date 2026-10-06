@@ -84,7 +84,7 @@ const copy = {
     synthesis: '12 nguồn được sàng lọc · 3 góc nhìn phản biện',
     facts: ['Nguồn được chấm chất lượng', 'Trích dẫn gắn với luận điểm', 'Audit trước khi xuất report'],
     assurances: [
-      ['Tìm kiếm đa nguồn', 'Tavily, Wikipedia và nguồn gốc'],
+      ['Tìm kiếm đa nguồn', 'Tavily, PDF và tài liệu công khai'],
       ['Nhóm analyst AI', 'Phân tích song song nhiều góc nhìn'],
       ['Báo cáo kiểm chứng', 'Có thư mục nguồn và audit trail'],
       ['Phiên riêng tư', 'Cookie ký, HTTP-only, không lưu token'],
@@ -115,7 +115,7 @@ const copy = {
     synthesis: '12 sources screened · 3 critical perspectives',
     facts: ['Source quality scoring', 'Claim-linked citations', 'Pre-export evidence audit'],
     assurances: [
-      ['Multi-source search', 'Tavily, Wikipedia and primary sources'],
+      ['Multi-source search', 'Tavily, PDFs and public documents'],
       ['AI analyst team', 'Parallel, multi-angle analysis'],
       ['Verified reports', 'Bibliography and audit trail included'],
       ['Private session', 'Signed HTTP-only cookie, no stored token'],

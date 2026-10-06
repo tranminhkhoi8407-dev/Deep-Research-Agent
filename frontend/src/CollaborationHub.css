@@ -201,7 +201,7 @@
   margin: 0 0 15px;
   font-size: 20px;
 }
-.collab-card p {
+.collab-card p:not(:where(.bn-container *)) {
   color: var(--muted);
 }
 .collab-kicker {

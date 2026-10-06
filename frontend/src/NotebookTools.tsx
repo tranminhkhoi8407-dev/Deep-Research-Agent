@@ -3,7 +3,7 @@ import { ArrowDown, ArrowUp, FilePlus2, FileText, GripVertical, Link2, Search } 
 import type { Language } from "./ProductViews";
 import type { DomainResearchPayload, ResearchDomainId } from "./DomainHub";
 
-export type NotebookPage = { id: string; title: string; parent_id: string | null; position?: number };
+export type NotebookPage = { id: string; title: string; parent_id: string | null; position?: number; icon?: string; favorite?: boolean; updated_at?: string };
 export type NotebookEvidence = { id: string; title: string; url: string; doi: string; note: string };
 export type NotebookReferences = { pages: NotebookPage[]; evidence: NotebookEvidence[]; backlinks: { id: string; title: string }[] };
 

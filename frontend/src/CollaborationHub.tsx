@@ -38,6 +38,7 @@ import type { AuthUser } from "./Auth";
 import type { Language, StoredReportSummary } from "./ProductViews";
 import { researchTemplate } from "./ResearchTemplates";
 import { NotebookTree, NotebookSearch, NotebookSources, NotebookBrief, useNotebookConfirm, type NotebookReferences } from "./NotebookTools";
+import type { NotebookPageAction, NotebookPageInfo } from './NotebookPageIcon';
 import type { NotebookBlock, NotebookOperation, SubpageConversion } from "./LiveResearchEditor";
 import type { DomainResearchPayload } from "./DomainHub";
 import "./CollaborationHub.css";
@@ -301,6 +302,9 @@ export function PageView({
     onConvertToPage: (payload: SubpageConversion) => Promise<{ id: string; title: string }>;
     onChanged: () => void;
     onSync: (synced: boolean) => void;
+    pages: NotebookPageInfo[];
+    pageHref: (id: string) => string;
+    onPageAction: (id: string, action: NotebookPageAction) => void;
   };
 }) {
   const [detail, setDetail] = useState<PageDetail | null>(null);
@@ -337,6 +341,16 @@ export function PageView({
   useEffect(() => {
     void refresh().catch((reason: Error) => setError(reason.message));
   }, [refresh]);
+  useEffect(() => {
+    if (workspace) return; // Field chrome records its own active-page visit; side peeks are previews.
+    const record = () => {
+      if (document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', record);
+      void api(apiBase, `/pages/${pageId}/view`, { method: 'POST' }).catch(() => { /* Page loading reports access/session errors. */ });
+    };
+    record(); if (document.visibilityState !== 'visible') document.addEventListener('visibilitychange', record);
+    return () => document.removeEventListener('visibilitychange', record);
+  }, [apiBase, pageId, !!workspace]);
   useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible")
@@ -621,7 +635,10 @@ export function PageView({
               onCreateSubpageUnder={workspace?.onCreateChildUnder}
               onConvertToPage={workspace?.onConvertToPage}
               onOpenPage={onOpen}
-              pages={references.pages}
+              pages={workspace?.pages || references.pages}
+              pageHref={workspace?.pageHref}
+              onPageAction={workspace?.onPageAction}
+              onPageTreeChanged={() => { void refresh().catch((reason: Error) => setError(reason.message)); workspace?.onChanged(); }}
               onBlocks={setBlocks}
               operation={operation}
             />

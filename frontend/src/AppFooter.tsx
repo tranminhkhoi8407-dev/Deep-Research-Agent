@@ -33,7 +33,7 @@ interface AppFooterProps {
 
 const copy = {
   vi: {
-    description: 'Workspace nghiên cứu ưu tiên bằng chứng, kết hợp nhiều analyst AI, tìm kiếm đa nguồn và báo cáo có thể kiểm chứng.',
+    description: 'Workspace đọc nguồn theo câu hỏi, phân tích paper theo lĩnh vực và báo cáo có dẫn chứng truy ngược được.',
     product: 'Sản phẩm & Công cụ', account: 'Tài khoản & Hỗ trợ', legal: 'Pháp lý & Bảo mật',
     research: 'Research workspace', domains: 'Lĩnh vực nghiên cứu', reports: 'Thư viện báo cáo', sources: 'Kho nguồn', settings: 'Cài đặt nghiên cứu', guide: 'Hướng dẫn sử dụng', pricing: 'Bảng giá & license',
     profile: 'Hồ sơ nghiên cứu', accountSettings: 'Cài đặt tài khoản', help: 'Trung tâm trợ giúp', changelog: 'Nhật ký thay đổi', about: 'Về Nexora',
@@ -43,11 +43,11 @@ const copy = {
     ctaPrimary: 'Bắt đầu nghiên cứu', ctaSecondary: 'Xem hướng dẫn',
     online: 'v0.8.1 · Hệ thống hoạt động', offline: 'v0.8.1 · Backend ngoại tuyến', checking: 'v0.8.1 · Đang kiểm tra',
     copyright: 'Nexora Workspace. Mọi quyền được bảo lưu.',
-    stack: 'Gemini synthesis · Tavily search · Wikipedia cross-check · LangGraph orchestration',
+    stack: 'Shared document cache · Tavily discovery · Evidence review · LangGraph',
     backToTop: 'Về đầu trang', navLabel: 'Điều hướng cuối trang',
   },
   en: {
-    description: 'An evidence-first research workspace combining multiple AI analysts, multi-source search, and verifiable reports.',
+    description: 'An evidence-first workspace for question-driven reading, field-specific paper analysis, and source-linked reports.',
     product: 'Product & Tools', account: 'Account & Support', legal: 'Legal & Security',
     research: 'Research workspace', domains: 'Research fields', reports: 'Report library', sources: 'Source catalog', settings: 'Research settings', guide: 'Product guide', pricing: 'Pricing & licenses',
     profile: 'Research profile', accountSettings: 'Account settings', help: 'Help center', changelog: 'Changelog', about: 'About Nexora',
@@ -57,7 +57,7 @@ const copy = {
     ctaPrimary: 'Start research', ctaSecondary: 'Read the guide',
     online: 'v0.8.1 · System operational', offline: 'v0.8.1 · Backend offline', checking: 'v0.8.1 · Checking system',
     copyright: 'Nexora Workspace. All rights reserved.',
-    stack: 'Gemini synthesis · Tavily search · Wikipedia cross-check · LangGraph orchestration',
+    stack: 'Shared document cache · Tavily discovery · Evidence review · LangGraph',
     backToTop: 'Back to top', navLabel: 'Footer navigation',
   },
 } as const;

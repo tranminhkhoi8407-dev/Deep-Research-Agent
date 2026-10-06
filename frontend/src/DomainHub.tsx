@@ -31,6 +31,7 @@ import type { Language } from './ProductViews';
 export type ResearchDomainId = 'mathematics' | 'physics' | 'chemistry' | 'biology' | 'artificial-intelligence';
 
 export interface DomainResearchPayload {
+  analysisMode?: 'paper';
   topic: string;
   domain: ResearchDomainId;
   domainLabel: string;

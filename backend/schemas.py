@@ -1,18 +1,25 @@
 """Pydantic schemas cho API request/response."""
 
 from pydantic import BaseModel, Field
+from agent.research_contract import ResearchBudget
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 
 # Request/Response cho REST endpoints
 class ResearchRequest(BaseModel):
-    topic: str = Field(..., description="Chủ đề nghiên cứu")
+    topic: str = Field(default="", max_length=20000, description="Chủ đề nghiên cứu; yêu cầu bổ sung tùy chọn trong chế độ paper")
     max_analysts: int = Field(default=3, ge=1, le=10, description="Số analyst song song")
     user_id: str = Field(default="default", description="User ID cho long-term memory")
-    report_language: Literal["vi", "en"] = Field(
-        default="vi", description="Ngôn ngữ của nội dung báo cáo"
+    report_language: Literal["auto", "vi", "en"] = Field(
+        default="auto", description="Report language, independent of UI"
     )
+    analysis_mode: Literal["research", "paper"] = "research"
+    paper_input: str = Field(default="", max_length=2000)
+    document_id: str = Field(default="", max_length=64)
+    report_detail: Literal["concise", "detailed", "extended"] = "detailed"
+    preferred_report_language: Literal["vi", "en"] = "vi"
+    budget: ResearchBudget | None = None
     research_depth: Literal["quick", "standard", "deep"] = Field(
         default="standard", description="Mức độ sâu của pipeline nghiên cứu"
     )
@@ -48,6 +55,7 @@ class ReportResponse(BaseModel):
     final_report: str
     created_at: datetime
     status: str = "completed"
+    report_data: dict | None = None
 
 
 # WebSocket message types
@@ -88,6 +96,7 @@ class WSSectionList(BaseModel):
     """Server -> Client: danh sách section hoàn thành (tại interrupt 2)."""
     event: str = "sections_completed"
     sections: List[str]  # section content/title
+    report_data: dict | None = None
 
 
 class WSFEedbackRequest(BaseModel):
@@ -112,6 +121,8 @@ class WSReportComplete(BaseModel):
     source_count: int = 0
     research_depth: str = "standard"
     audit_notes: Optional[str] = None
+    report_data: dict | None = None
+    outcome: Literal["completed", "partial", "failed"] = "completed"
 
 
 class WSError(BaseModel):
@@ -125,12 +136,18 @@ class WSError(BaseModel):
 class WSClientMessage(BaseModel):
     """Union của các message client có thể gửi."""
     event: str
-    topic: Optional[str] = None
+    topic: Optional[str] = Field(default=None, max_length=20000)
     max_analysts: Optional[int] = None
     user_id: Optional[str] = None
     session_id: Optional[str] = None
-    feedback: Optional[str] = None
-    report_language: Optional[Literal["vi", "en"]] = "vi"
+    feedback: Optional[str] = Field(default=None, max_length=4000)
+    report_language: Optional[Literal["auto", "vi", "en"]] = "auto"
+    analysis_mode: Literal["research", "paper"] = "research"
+    paper_input: str = Field(default="", max_length=2000)
+    document_id: str = Field(default="", max_length=64)
+    report_detail: Literal["concise", "detailed", "extended"] = "detailed"
+    preferred_report_language: Literal["vi", "en"] = "vi"
+    budget: ResearchBudget | None = None
     research_depth: Optional[Literal["quick", "standard", "deep"]] = "standard"
     research_domain: Optional[str] = Field(default="general", max_length=80)
     research_category: Optional[str] = Field(default="", max_length=120)

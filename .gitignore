@@ -6,6 +6,10 @@ venv/
 reports/
 data/
 .langgraph_api/
+.tools/
+tmp/report-evaluation/
+tmp/pdfs/
+output/pdf/
 *.egg-info/
 frontend/node_modules/
 frontend/dist/

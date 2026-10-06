@@ -2101,10 +2101,12 @@ html[data-theme='dark'] {
   color-scheme: dark;
 }
 html[data-theme='dark'] body { color: var(--ink); background: #0c1524; }
-html[data-theme='dark'] :is(h1,h2,h3,h4) { color: var(--ink); }
-html[data-theme='dark'] :is(p,small) { color: var(--muted); }
-html[data-theme='dark'] :is(input,textarea,select) { color: var(--ink); caret-color: var(--blue); }
-html[data-theme='dark'] :is(input,textarea)::placeholder { color: #8fa1bc; opacity: 1; }
+/* Editors and notebook popovers own their palette. Setting a color on their
+   paragraphs/headings overrides the color inherited from a selected block. */
+html[data-theme='dark'] :is(h1,h2,h3,h4):not(:where(.bn-container *, .notebook-share-dialog *, .notebook-activity-panel *, .notebook-tab-picker *)) { color: var(--ink); }
+html[data-theme='dark'] :is(p,small):not(:where(.bn-container *, .notebook-share-dialog *, .notebook-activity-panel *, .notebook-tab-picker *)) { color: var(--muted); }
+html[data-theme='dark'] :is(input,textarea,select):not(:where(.bn-container *, .notebook-share-dialog *, .notebook-activity-panel *, .notebook-tab-picker *)) { color: var(--ink); caret-color: var(--blue); }
+html[data-theme='dark'] :is(input,textarea):not(:where(.bn-container *, .notebook-share-dialog *, .notebook-activity-panel *, .notebook-tab-picker *))::placeholder { color: #8fa1bc; opacity: 1; }
 html[data-theme='dark'] :is(button,a):focus-visible { outline: 2px solid #9ac4ff; outline-offset: 3px; }
 
 html[data-theme='dark'] :is(.product-page,.admin-page,.public-info-shell,.app-panel,.login-panel) { background: #0c1524; }

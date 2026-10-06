@@ -7,8 +7,9 @@
     "dev": "vite",
     "test:profile": "node --test tests/profileNavigation.test.mjs",
     "test:theme": "node --test tests/themePalette.test.mjs",
-    "test:fields": "node --test tests/fieldNavigation.test.mjs",
+    "test:fields": "node --test tests/fieldNavigation.test.mjs tests/workspaceTabs.test.mjs tests/notebookChrome.test.mjs",
     "test:notebook": "node --test tests/notebook.test.mjs",
+    "test:research": "node --test tests/researchForm.test.mjs tests/reportExports.test.mjs",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview"
   },

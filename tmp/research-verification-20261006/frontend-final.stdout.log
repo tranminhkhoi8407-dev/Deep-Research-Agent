@@ -1,0 +1,21 @@
+
+  VITE v6.4.3  ready in 278 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  press h + enter to show help
+9:52:05 PM [vite] (client) hmr update /src/ResearchSetup.tsx
+9:52:06 PM [vite] (client) hmr invalidate /src/ResearchSetup.tsx Could not Fast Refresh (new export)
+9:52:06 PM [vite] (client) hmr update /src/App.tsx
+9:53:47 PM [vite] (client) hmr update /src/ResearchEvidence.tsx
+9:54:48 PM [vite] (client) hmr update /src/ResearchEvidence.tsx
+9:54:48 PM [vite] (client) hmr update /src/ResearchEvidence.css
+9:56:14 PM [vite] (client) hmr update /src/App.tsx
+9:56:14 PM [vite] (client) hmr update /src/ProductViews.tsx
+9:58:14 PM [vite] (client) hmr update /src/ResearchEvidence.tsx
+9:58:14 PM [vite] (client) hmr update /src/ResearchVisual.tsx
+10:22:53 PM [vite] (client) hmr update /src/ResearchEvidence.tsx
+10:23:17 PM [vite] (client) hmr update /src/ResearchEvidence.tsx
+10:23:17 PM [vite] (client) hmr update /src/ResearchEvidence.css
+10:34:43 PM [vite] (client) hmr update /src/ReportExport.tsx
+10:34:43 PM [vite] (client) hmr update /src/ResearchEvidence.tsx, /src/ReportExport.tsx, /src/App.tsx
+10:39:56 PM [vite] (client) hmr update /src/ResearchVisual.tsx

@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
   type FormEvent,
+  type ReactNode,
 } from "react";
 import {
   ArrowLeft,
@@ -37,7 +38,8 @@ import type { AuthUser } from "./Auth";
 import type { Language, StoredReportSummary } from "./ProductViews";
 import { researchTemplate } from "./ResearchTemplates";
 import { NotebookTree, NotebookSearch, NotebookSources, NotebookBrief, useNotebookConfirm, type NotebookReferences } from "./NotebookTools";
-import type { NotebookBlock, NotebookOperation } from "./LiveResearchEditor";
+import type { NotebookPageAction, NotebookPageInfo } from './NotebookPageIcon';
+import type { NotebookBlock, NotebookOperation, SubpageConversion } from "./LiveResearchEditor";
 import type { DomainResearchPayload } from "./DomainHub";
 import "./CollaborationHub.css";
 
@@ -274,7 +276,7 @@ function downloadText(filename: string, content: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function PageView({
+export function PageView({
   apiBase,
   pageId,
   language,
@@ -283,6 +285,7 @@ function PageView({
   onBack,
   onOpen,
   onPrepareResearch,
+  workspace,
 }: {
   apiBase: string;
   pageId: string;
@@ -292,12 +295,24 @@ function PageView({
   onBack: (projectId?: string) => void;
   onOpen: (pageId: string) => void;
   onPrepareResearch: (payload: DomainResearchPayload) => void;
+  workspace?: {
+    header: ReactNode;
+    onCreateChild: () => void;
+    onCreateChildUnder: (pageId: string) => void;
+    onConvertToPage: (payload: SubpageConversion) => Promise<{ id: string; title: string }>;
+    onChanged: () => void;
+    onSync: (synced: boolean) => void;
+    pages: NotebookPageInfo[];
+    pageHref: (id: string) => string;
+    onPageAction: (id: string, action: NotebookPageAction) => void;
+  };
 }) {
   const [detail, setDetail] = useState<PageDetail | null>(null);
   const [body, setBody] = useState("");
   const [blocks, setBlocks] = useState<NotebookBlock[]>([]);
   const [references, setReferences] = useState<NotebookReferences>({ pages: [], evidence: [], backlinks: [] });
   const [synced, setSynced] = useState(false);
+  const [showSide, setShowSide] = useState(!workspace);
   const [title, setTitle] = useState("");
   const [comment, setComment] = useState("");
   const [inviteName, setInviteName] = useState("");
@@ -327,6 +342,16 @@ function PageView({
     void refresh().catch((reason: Error) => setError(reason.message));
   }, [refresh]);
   useEffect(() => {
+    if (workspace) return; // Field chrome records its own active-page visit; side peeks are previews.
+    const record = () => {
+      if (document.visibilityState !== 'visible') return;
+      document.removeEventListener('visibilitychange', record);
+      void api(apiBase, `/pages/${pageId}/view`, { method: 'POST' }).catch(() => { /* Page loading reports access/session errors. */ });
+    };
+    record(); if (document.visibilityState !== 'visible') document.addEventListener('visibilitychange', record);
+    return () => document.removeEventListener('visibilitychange', record);
+  }, [apiBase, pageId, !!workspace]);
+  useEffect(() => {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible")
         void api<PageDetail>(apiBase, `/pages/${pageId}`)
@@ -355,6 +380,7 @@ function PageView({
         body: JSON.stringify({ title: title.trim() }),
       });
       await refresh();
+      workspace?.onChanged();
     });
   };
   const invite = (event: FormEvent) => {
@@ -502,8 +528,8 @@ function PageView({
     if (
       !await confirmNotebook(
         language === "vi"
-          ? "Lưu trữ trang này? Quản lý dự án có thể khôi phục về sau."
-          : "Archive this page? A project manager can restore it later.",
+          ? "Lưu trữ trang này và toàn bộ trang con? Quản lý dự án có thể khôi phục cả nhánh về sau."
+          : "Archive this page and all its subpages? A project manager can restore the branch later.",
       )
     )
       return;
@@ -532,12 +558,14 @@ function PageView({
       </section>
     );
   return (
-    <div className="collab-page">
+    <div className={`collab-page ${workspace ? 'field-editor' : ''} ${showSide ? 'with-inspector' : ''}`}>
       {notebookConfirmation}
+      {workspace && (message || error) && <p className={error ? 'collab-inline-error' : 'collab-inline-success'} role={error ? 'alert' : 'status'}>{error || message}</p>}
       <div className="collab-page__heading">
         <button
           type="button"
           className="collab-back"
+          hidden={!!workspace}
           onClick={() =>
             onBack(detail.project.my_access ? detail.project.id : undefined)
           }
@@ -560,12 +588,15 @@ function PageView({
                 : "View only"}
         </span>
       </div>
-      <div className={`collab-page__grid ${references.pages.length ? "has-notebook-tree" : ""}`}>
-        {references.pages.length > 0 && <NotebookTree apiBase={apiBase} language={language} projectId={detail.project.id} pageId={pageId} pages={references.pages} canEdit={detail.project.my_access >= 3} onOpen={onOpen} onChanged={refreshReferences} />}
-        <article className="collab-card collab-page__main">
+      {workspace && <button className="field-inspector-toggle" type="button" aria-expanded={showSide} onClick={() => setShowSide(value => !value)}><BookOpen size={15} />{language === 'vi' ? 'Nguồn · Chia sẻ · Phiên bản' : 'Sources · Share · History'}<ChevronDown size={15} /></button>}
+      <div className={`collab-page__grid ${references.pages.length && !workspace ? "has-notebook-tree" : ""}`}>
+        {references.pages.length > 0 && !workspace && <NotebookTree apiBase={apiBase} language={language} projectId={detail.project.id} pageId={pageId} pages={references.pages} canEdit={detail.project.my_access >= 3} onOpen={onOpen} onChanged={refreshReferences} />}
+        <article className="collab-card collab-page__main" data-tour={workspace ? 'field-writing' : undefined}>
+          {workspace?.header}
           <input
             className="collab-page__title"
             value={title}
+            maxLength={120}
             readOnly={!canEdit}
             onChange={(event) => setTitle(event.target.value)}
             onBlur={saveTitle}
@@ -599,11 +630,21 @@ function PageView({
               language={language}
               canEdit={canEdit}
               onReady={setBody}
-              onSync={setSynced}
+              onSync={(value) => { setSynced(value); workspace?.onSync(value); }}
+              onCreateSubpage={workspace?.onCreateChild}
+              onCreateSubpageUnder={workspace?.onCreateChildUnder}
+              onConvertToPage={workspace?.onConvertToPage}
+              onOpenPage={onOpen}
+              pages={workspace?.pages || references.pages}
+              pageHref={workspace?.pageHref}
+              onPageAction={workspace?.onPageAction}
+              onPageTreeChanged={() => { void refresh().catch((reason: Error) => setError(reason.message)); workspace?.onChanged(); }}
               onBlocks={setBlocks}
               operation={operation}
             />
           </Suspense>
+          {!workspace && <details className="field-document-tools" open>
+          <summary>{language === 'vi' ? 'Công cụ nghiên cứu · Mẫu · Nhập / Xuất' : 'Research tools · Templates · Import / Export'}</summary>
           <div className="collab-page__actions">
             <button type="button" disabled={!synced || !blocks.length} title={blocks.length ? "Export full block structure" : "Convert to blocks first; Markdown export remains available"} onClick={() => downloadText(`${title || "research-page"}.json`, JSON.stringify({ format: "nexora-notebook", version: 1, title, field: detail.project.field, exported_at: new Date().toISOString(), markdown: body, blocks, evidence: references.evidence.filter(item => body.includes(item.url)) }, null, 2))}><Download size={15} />JSON</button>
             <button
@@ -633,7 +674,7 @@ function PageView({
                 {language === "vi" ? "Chép ghi chú Fields" : "Copy field note"}
               </button>
             )}
-            {detail.page.can_manage && (
+            {detail.page.can_manage && !workspace && (
               <button type="button" onClick={archivePage} disabled={busy}>
                 <Trash2 size={15} />
                 {language === "vi" ? "Lưu trữ trang" : "Archive page"}
@@ -727,8 +768,9 @@ function PageView({
               </div>
             </details>
           )}
+          </details>}
         </article>
-        <aside className="collab-card collab-page__side">
+        <aside className="collab-card collab-page__side" hidden={!showSide}>
           <div className="collab-side-tabs">
             {(
               [

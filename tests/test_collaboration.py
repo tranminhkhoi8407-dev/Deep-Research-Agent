@@ -15,6 +15,191 @@ from pycrdt import Doc, Text, XmlFragment, XmlElement, XmlText
 from backend.accounts import register_login
 from backend.collaboration import db
 from backend.main import app
+from backend.collaboration import document_state, page_link_blocks
+
+
+def notebook_document(client, page_id):
+    result = client.get(f"/api/collab/pages/{page_id}/document")
+    assert result.status_code == 200, result.text
+    document = Doc({"notebook": XmlFragment(), "markdown": Text()})
+    document.apply_update(base64.b64decode(result.json()["update"]))
+    return document
+
+
+def initialize_notebook(client, page_id):
+    document = Doc({"notebook": XmlFragment([XmlElement("blockGroup", contents=[
+        XmlElement("blockContainer", attributes={"id": "original-text"}, contents=[XmlElement("paragraph", contents=[XmlText("Keep this paragraph")])])
+    ])])})
+    result = client.post(f"/api/collab/pages/{page_id}/initialize-blocks", json={"expected_revision": 0, "update": base64.b64encode(document.get_update()).decode()})
+    assert result.status_code == 200, result.text
+    return notebook_document(client, page_id)
+
+
+def send_notebook_update(client, page_id, update):
+    with client.websocket_connect(f"/api/collab/pages/{page_id}/live") as socket:
+        while socket.receive_json()["type"] != "ready":
+            pass
+        socket.send_json({"type": "update", "format": "blocks", "id": "test-update", "data": base64.b64encode(update).decode()})
+        while True:
+            message = socket.receive_json()
+            if message["type"] == "ack":
+                assert message["id"] == "test-update"
+                return
+
+
+@pytest.mark.parametrize("field", ["mathematics", "physics", "chemistry", "biology", "artificial-intelligence"])
+def test_field_root_sibling_and_owned_child_are_different(field):
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put(f"/api/collab/field-workspaces/{field}", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        initialize_notebook(alice, home)
+        create_path = f"/api/collab/projects/{project}/pages"
+        sibling = alice.post(create_path, json={"title": "Independent root", "parent_id": None}).json()["page"]
+        child = alice.post(create_path, json={"title": "Inside the field home", "parent_id": home}).json()["page"]
+        assert sibling["parent_id"] is None and child["parent_id"] == home
+        links = page_link_blocks(notebook_document(alice, home))
+        assert child["id"] in links and sibling["id"] not in links
+        assert "Keep this paragraph" in str(notebook_document(alice, home)["notebook"])
+        initialize_notebook(alice, sibling["id"])
+        response = alice.patch(f"/api/collab/pages/{child['id']}", json={"parent_id": sibling["id"]})
+        assert response.status_code == 200, response.text
+        assert child["id"] not in page_link_blocks(notebook_document(alice, home))
+        assert child["id"] in page_link_blocks(notebook_document(alice, sibling["id"]))
+        alice.patch(f"/api/collab/pages/{child['id']}", json={"parent_id": None})
+        assert child["id"] not in page_link_blocks(notebook_document(alice, sibling["id"]))
+        roots = alice.put(f"/api/collab/field-workspaces/{field}", json={}).json()["pages"]
+        assert all(row["parent_id"] is None for row in roots)
+
+
+def test_removing_child_page_block_trashes_branch_and_undo_restores_only_that_batch():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        initialize_notebook(alice, home)
+        def create(title, parent):
+            return alice.post(f"/api/collab/projects/{project}/pages", json={"title": title, "parent_id": parent}).json()["page"]["id"]
+        child = create("Để", home)
+        grandchild = create("Proof", child)
+        old = create("Previously trashed", child)
+        alice.post(f"/api/collab/pages/{old}/archive")
+        document = notebook_document(alice, home)
+        block_id = next(iter(page_link_blocks(document)[child]))
+        state = document.get_state()
+        group = document["notebook"].children[0]
+        for index, node in enumerate(group.children):
+            if node.attributes.get("id") == block_id:
+                del group.children[index]
+                break
+        update = document.get_update(state)
+        send_notebook_update(alice, home, update)
+        assert alice.get(f"/api/collab/pages/{child}").status_code == 404
+        assert alice.get(f"/api/collab/pages/{grandchild}").status_code == 404
+        active = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()["pages"]
+        assert child not in {page["id"] for page in active}
+        # Idempotent replay/reconnect must not create a fresh trash batch.
+        with db() as conn:
+            batch = conn.execute("SELECT archive_batch FROM research_pages WHERE id=?", (child,)).fetchone()[0]
+        send_notebook_update(alice, home, update)
+        with db() as conn:
+            assert conn.execute("SELECT archive_batch FROM research_pages WHERE id=?", (child,)).fetchone()[0] == batch
+        # Restoring the same block id models Yjs undo, without resurrecting old trash.
+        state = document.get_state()
+        group.children.append(XmlElement("blockContainer", attributes={"id": block_id}, contents=[XmlElement("pageLink", attributes={"pageId": child, "title": "Để"})]))
+        send_notebook_update(alice, home, document.get_update(state))
+        assert alice.get(f"/api/collab/pages/{child}").status_code == 200
+        assert alice.get(f"/api/collab/pages/{grandchild}").status_code == 200
+        assert alice.get(f"/api/collab/pages/{old}").status_code == 404
+        # After undo, deleting again still trashes the actual page.
+        state = document.get_state()
+        del group.children[len(group.children) - 1]
+        send_notebook_update(alice, home, document.get_update(state))
+        assert alice.get(f"/api/collab/pages/{child}").status_code == 404
+
+
+def test_deleting_sibling_reference_and_one_of_two_child_links_keeps_real_pages():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put("/api/collab/field-workspaces/physics", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        initialize_notebook(alice, home)
+        sibling = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Root sibling"}).json()["page"]["id"]
+        child = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Child", "parent_id": home}).json()["page"]["id"]
+        document = notebook_document(alice, home)
+        group = document["notebook"].children[0]
+        state = document.get_state()
+        group.children.append(XmlElement("blockContainer", attributes={"id": "reference"}, contents=[XmlElement("pageLink", attributes={"pageId": sibling, "title": "Root sibling"})]))
+        group.children.append(XmlElement("blockContainer", attributes={"id": "second-child-link"}, contents=[XmlElement("pageLink", attributes={"pageId": child, "title": "Child"})]))
+        send_notebook_update(alice, home, document.get_update(state))
+        state = document.get_state()
+        del group.children[1]  # Original child block; another link still exists.
+        del group.children[1]  # Sibling reference, NOT an owned page.
+        send_notebook_update(alice, home, document.get_update(state))
+        assert alice.get(f"/api/collab/pages/{sibling}").status_code == 200
+        assert alice.get(f"/api/collab/pages/{child}").status_code == 200
+
+
+def test_sidebar_trash_restore_and_legacy_children_keep_editor_links_consistent():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put("/api/collab/field-workspaces/chemistry", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        child = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Legacy child", "parent_id": home}).json()["page"]["id"]
+        assert child in page_link_blocks(initialize_notebook(alice, home))
+        assert alice.post(f"/api/collab/pages/{child}/archive").status_code == 200
+        assert child not in page_link_blocks(notebook_document(alice, home))
+        assert alice.post(f"/api/collab/pages/{child}/restore").status_code == 200
+        assert child in page_link_blocks(notebook_document(alice, home))
+        duplicate = alice.post(f"/api/collab/pages/{child}/duplicate").json()["page"]
+        assert duplicate["parent_id"] == home
+        assert duplicate["id"] in page_link_blocks(notebook_document(alice, home))
+
+
+def test_page_only_editor_cannot_trash_children_through_collaborative_update():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); account(bob, "bob")
+        name(alice, "Alice"); name(bob, "Bob")
+        workspace = alice.put("/api/collab/field-workspaces/biology", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        initialize_notebook(alice, home)
+        child = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Private child", "parent_id": home}).json()["page"]["id"]
+        invite = alice.post(f"/api/collab/pages/{home}/invites", json={"username": "Bob", "role": "editor"}).json()["invite"]
+        bob.patch(f"/api/collab/invites/{invite['id']}?action=accept")
+        document = notebook_document(bob, home)
+        state = document.get_state()
+        del document["notebook"].children[0].children[1]
+        with pytest.raises(WebSocketDisconnect):
+            send_notebook_update(bob, home, document.get_update(state))
+        assert child in page_link_blocks(notebook_document(alice, home))
+        assert alice.get(f"/api/collab/pages/{child}").status_code == 200
+
+
+def test_old_missing_child_links_are_repaired_once_without_deleting_or_reparenting():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        home, project = workspace["home_page_id"], workspace["project_id"]
+        initialize_notebook(alice, home)
+        child = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Existing Để", "parent_id": home}).json()["page"]["id"]
+        root = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Existing root"}).json()["page"]["id"]
+        document = notebook_document(alice, home)
+        state = document.get_state()
+        del document["notebook"].children[0].children[1]
+        # Reproduce the old bug's durable state, before structural synchronization.
+        with db() as conn:
+            conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (home, "google:alice", document.get_update(state), "2026-10-05T12:00:00+00:00"))
+            conn.execute("UPDATE research_pages SET field_links_ready=0 WHERE id=?", (home,))
+        repaired = alice.get(f"/api/collab/pages/{home}/document").json()
+        links = page_link_blocks(notebook_document(alice, home))
+        assert child in links and root not in links
+        assert alice.get(f"/api/collab/pages/{child}").json()["page"]["parent_id"] == home
+        assert "Keep this paragraph" in str(notebook_document(alice, home)["notebook"])
+        assert alice.get(f"/api/collab/pages/{home}/document").json()["revision"] == repaired["revision"]
+        alice.patch(f"/api/collab/pages/{child}", json={"title": "Renamed Để", "icon": "🎯"})
+        assert "Renamed Để" in str(notebook_document(alice, home)["notebook"])
+        reference = next(page for page in alice.get(f"/api/collab/pages/{home}/references").json()["pages"] if page["id"] == child)
+        assert reference["title"] == "Renamed Để" and reference["icon"] == "🎯"
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +220,237 @@ def account(client: TestClient, suffix: str) -> None:
 def name(client: TestClient, value: str):
     response = client.put("/api/collab/identity", json={"name": value})
     assert response.status_code == 200, response.text
+
+
+def test_workspace_tab_picker_is_account_scoped_filters_titles_and_excludes_trash():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); name(alice, "Alice")
+        account(bob, "bob"); name(bob, "Bob")
+        math = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        physics = alice.put("/api/collab/field-workspaces/physics", json={}).json()
+        secret = bob.put("/api/collab/field-workspaces/biology", json={}).json()
+        child = alice.post(f"/api/collab/projects/{math['project_id']}/pages", json={"title": "Convergence proof", "parent_id": math["home_page_id"]}).json()["page"]
+        rows = alice.get("/api/collab/tab-pages").json()["pages"]
+        assert {row["id"] for row in rows} == {math["home_page_id"], physics["home_page_id"], child["id"]}
+        assert secret["home_page_id"] not in {row["id"] for row in rows}
+        rows = alice.get("/api/collab/tab-pages?query=CONVERGENCE&field=mathematics").json()["pages"]
+        assert [row["id"] for row in rows] == [child["id"]]
+        assert alice.get("/api/collab/tab-pages?field=unknown").status_code == 422
+        alice.post(f"/api/collab/pages/{child['id']}/archive")
+        assert alice.get("/api/collab/tab-pages?query=Convergence").json()["pages"] == []
+
+
+def test_page_analytics_records_real_views_deduplicates_and_respects_history_privacy():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); name(alice, "Alice")
+        account(bob, "bob"); name(bob, "Bob")
+        workspace = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        path = f"/api/collab/pages/{workspace['home_page_id']}"
+        assert bob.post(path + "/view").status_code == 404
+        assert bob.put(path + "/view-history", json={"show_history": True}).status_code == 404
+        assert alice.post(path + "/view").json() == {"recorded": True, "show_history": False}
+        assert alice.post(path + "/view").json()["recorded"] is False
+        stats = alice.get(path + "/analytics?days=28")
+        assert stats.status_code == 200, stats.text
+        result = stats.json()
+        assert len(result["series"]) == 28
+        assert result["totals"] == {"views": 1, "unique_views": 1}
+        assert result["viewers"] == []
+        assert sum(row["views"] for row in result["series"]) == 1
+        alice.put(path + "/view-history", json={"show_history": True})
+        assert alice.get(path + "/analytics").json()["viewers"][0]["person"]["public_name"] == "Alice"
+        alice.put(path + "/view-history", json={"show_history": False})
+        assert alice.get(path + "/analytics").json()["viewers"] == []
+        assert alice.get(path + "/analytics?days=14").status_code == 422
+        assert alice.get(path + "/analytics?days=7").status_code == 200
+
+
+def test_batch_share_invites_are_atomic_and_real_permissions_protect_analytics():
+    with TestClient(app) as alice, TestClient(app) as bob, TestClient(app) as carol:
+        account(alice, "alice"); name(alice, "Alice")
+        account(bob, "bob"); name(bob, "Bob")
+        account(carol, "carol"); name(carol, "Carol")
+        workspace = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        path = f"/api/collab/pages/{workspace['home_page_id']}"
+        invalid = alice.post(path + "/batch-invites", json={"recipients": ["Bob", "missing@example.com"]})
+        assert invalid.status_code == 404
+        assert alice.get(path + "/sharing").json()["pending_invites"] == []
+        invites = alice.post(path + "/batch-invites", json={"recipients": ["Bob", "bob@example.com", "carol@example.com"], "role": "viewer"})
+        assert invites.status_code == 201, invites.text
+        assert len(invites.json()["invites"]) == 2
+        assert bob.get(path).status_code == 404  # Pending invitation isn't an access grant.
+        bob_invite = bob.get("/api/collab/invites").json()["invites"][0]
+        assert bob.patch(f"/api/collab/invites/{bob_invite['id']}?action=accept").status_code == 200
+        assert bob.get(path).status_code == 200
+        assert bob.get(path + "/analytics").status_code == 404
+        assert bob.get(path + "/activity").json()["can_analyze"] is False
+        assert bob.post(path + "/view").status_code == 200
+        assert bob.post(path + "/batch-invites", json={"recipients": ["Carol"]}).status_code == 404
+        assert bob.get(path + "/sharing").json()["pending_invites"] == []
+        sharing = alice.get(path + "/sharing").json()
+        bob_id = next(member["id"] for member in sharing["members"] if member["public_name"] == "Bob")
+        assert alice.patch(path + f"/shares/{bob_id}", json={"role": "editor"}).status_code == 200
+        assert bob.get(path + "/analytics").status_code == 200
+        assert alice.delete(path + f"/shares/{bob_id}").status_code == 200
+        assert bob.get(path + "/activity").status_code == 404
+        assert bob.get(path + "/analytics").status_code == 404
+
+
+def test_page_updates_store_real_title_change_and_author_without_private_emails():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        workspace = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        path = f"/api/collab/pages/{workspace['home_page_id']}"
+        title = alice.get(path).json()["page"]["title"]
+        alice.patch(path, json={"title": "Research journal"})
+        activity = alice.get(path + "/activity").json()
+        update = next(item for item in activity["updates"] if item["action"] == "page.updated")
+        assert update["changes"]["title"] == {"before": title, "after": "Research journal"}
+        assert update["actor"]["public_name"] == "Alice"
+        assert "email" not in update["actor"]
+        assert activity["created_by"]["id"] == activity["edited_by"]["id"]
+
+
+def test_block_activity_tracks_own_content_authenticated_author_and_access():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); account(bob, "bob")
+        name(alice, "Alice"); name(bob, "Bob")
+        home = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        path = f"/api/collab/pages/{home['home_page_id']}"
+        child_text = XmlText("Nested")
+        second_text = XmlText("Beta")
+        seed = Doc({"notebook": XmlFragment([XmlElement("blockGroup", contents=[
+            XmlElement("blockContainer", attributes={"id": "block-a"}, contents=[
+                XmlElement("paragraph", contents=[XmlText("Alpha")]),
+                XmlElement("blockGroup", contents=[XmlElement("blockContainer", attributes={"id": "nested"}, contents=[XmlElement("paragraph", contents=[child_text])])]),
+            ]),
+            XmlElement("blockContainer", attributes={"id": "block-b"}, contents=[XmlElement("paragraph", contents=[second_text])]),
+        ])])})
+        payload = {"expected_revision": 0, "update": base64.b64encode(seed.get_update()).decode()}
+        assert alice.post(path + "/initialize-blocks", json=payload).status_code == 200
+        initial = alice.get(path + "/blocks/block-a/activity").json()
+        assert initial["edited_by"]["public_name"] == "Alice"
+        assert bob.get(path + "/blocks/block-a/activity").status_code == 404
+        assert alice.get(path + "/blocks/missing/activity").status_code == 404
+        assert alice.get(path + "/blocks/invalid.id/activity").status_code == 422
+        state = seed.get_state()
+        second_text += " changed"
+        child_text += " changed"
+        update = seed.get_update(state)
+        with db() as conn:
+            bob_id = conn.execute("SELECT id FROM users WHERE public_name = 'Bob'").fetchone()[0]
+            conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (home["home_page_id"], bob_id, update, "2026-10-05T11:12:00+00:00"))
+            # A duplicate delivery by a different actor isn't a fresh edit.
+            conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (home["home_page_id"], initial["edited_by"]["id"], update, "2026-10-05T11:13:00+00:00"))
+        for block in ["block-b", "nested"]:
+            activity = alice.get(path + f"/blocks/{block}/activity").json()
+            assert activity["edited_by"]["public_name"] == "Bob"
+            assert activity["edited_at"] == "2026-10-05T11:12:00+00:00"
+            assert "email" not in activity["edited_by"]
+        untouched = alice.get(path + "/blocks/block-a/activity").json()
+        assert untouched["edited_by"] == initial["edited_by"]
+        assert untouched["edited_at"] == initial["edited_at"]
+
+
+def test_five_field_homes_are_idempotent_private_and_independent():
+    fields = ["mathematics", "physics", "chemistry", "biology", "artificial-intelligence"]
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); account(bob, "bob")
+        name(alice, "Alice"); name(bob, "Bob")
+        homes = []
+        for field in fields:
+            path = f"/api/collab/field-workspaces/{field}"
+            first = alice.put(path, json={"language": "vi"}).json()
+            second = alice.put(path, json={"language": "en"}).json()
+            assert first["home_page_id"] == second["home_page_id"]
+            assert len(second["pages"]) == 1
+            assert second["pages"][0]["title"] == first["pages"][0]["title"]
+            own = bob.put(path, json={}).json()
+            assert own["project_id"] != first["project_id"]
+            home = first["home_page_id"]
+            assert bob.get(f"/api/collab/pages/{home}").status_code == 404
+            assert alice.post(f"/api/collab/pages/{home}/archive").status_code == 409
+            assert alice.patch(f"/api/collab/projects/{first['project_id']}", json={"status": "archived"}).status_code == 409
+            homes.append(home)
+        assert len(set(homes)) == 5
+        assert alice.put("/api/collab/field-workspaces/unknown", json={}).status_code == 422
+
+
+def test_field_workspace_concurrent_open_creates_only_one_home():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        def open_home(_):
+            result = alice.put("/api/collab/field-workspaces/physics", json={})
+            assert result.status_code == 200, result.text
+            return result.json()["home_page_id"]
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            assert len(set(pool.map(open_home, range(12)))) == 1
+
+
+def test_nested_field_pages_move_archive_restore_and_preferences():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); account(bob, "bob")
+        name(alice, "Alice"); name(bob, "Bob")
+        workspace_path = "/api/collab/field-workspaces/mathematics"
+        workspace = alice.put(workspace_path, json={}).json()
+        project, home = workspace["project_id"], workspace["home_page_id"]
+        def create(title, parent):
+            response = alice.post(f"/api/collab/projects/{project}/pages", json={"title": title, "parent_id": parent})
+            assert response.status_code == 201, response.text
+            return response.json()["page"]["id"]
+        chapter = create("Chapter", home)
+        theorem = create("Theorem", chapter)
+        proof = create("Proof", theorem)
+        old = create("Old approach", theorem)
+        path = f"/api/collab/pages/{chapter}"
+        assert alice.patch(path, json={"parent_id": proof}).status_code == 422
+        assert alice.patch(f"/api/collab/pages/{home}", json={"parent_id": chapter}).status_code == 422
+        assert alice.patch(path, json={"title": "  "}).status_code == 422
+        assert alice.post(f"/api/collab/projects/{project}/pages", json={"title": "  "}).status_code == 422
+        assert alice.patch(path, json={"icon": "📖", "cover": "forest", "full_width": True}).status_code == 200
+        assert alice.patch(path, json={"cover": "https://example.com/image"}).status_code == 422
+        assert alice.put(path + "/preference", json={"favorite": True, "opened": True}).status_code == 200
+        assert bob.put(path + "/preference", json={"favorite": True}).status_code == 404
+        current = next(p for p in alice.put(workspace_path, json={}).json()["pages"] if p["id"] == chapter)
+        assert current["favorite"] and current["opened_at"] and current["icon"] == "📖" and current["full_width"]
+        # A single-page invite must not expose the subtree.
+        invite_result = alice.post(path + "/invites", json={"username": "Bob", "role": "viewer"}).json()["invite"]
+        bob.patch(f"/api/collab/invites/{invite_result['id']}?action=accept")
+        assert bob.get(path).status_code == 200
+        assert bob.get(f"/api/collab/pages/{theorem}").status_code == 404
+        assert bob.get(path + "/references").json()["pages"] == []
+        assert bob.post(path + "/archive").status_code in (403, 404)
+        # An older archived child remains archived after the branch is restored.
+        assert alice.post(f"/api/collab/pages/{old}/archive").status_code == 200
+        assert alice.post(path + "/archive").status_code == 200
+        assert alice.get(f"/api/collab/pages/{proof}").status_code == 404
+        assert alice.post(f"/api/collab/pages/{proof}/restore").status_code == 409
+        assert alice.post(path + "/restore").status_code == 200
+        assert alice.get(f"/api/collab/pages/{proof}").status_code == 200
+        assert alice.get(f"/api/collab/pages/{old}").status_code == 404
+        assert alice.patch(f"/api/collab/pages/{theorem}", json={"parent_id": home}).status_code == 200
+        assert alice.get(f"/api/collab/pages/{proof}").json()["page"]["parent_id"] == theorem
+
+
+def test_duplicate_field_page_copies_authoritative_content_but_not_shares():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        account(alice, "alice"); account(bob, "bob")
+        name(alice, "Alice"); name(bob, "Bob")
+        workspace = alice.put("/api/collab/field-workspaces/biology", json={}).json()
+        page = alice.post(f"/api/collab/projects/{workspace['project_id']}/pages", json={"title": "Study", "parent_id": workspace['home_page_id']}).json()["page"]
+        path = f"/api/collab/pages/{page['id']}"
+        document = Doc({"markdown": Text("## Preserved findings")})
+        with db() as conn:
+            conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (page["id"], "google:alice", document.get_update(), "2026-10-04"))
+        invitation = alice.post(path + "/invites", json={"username": "Bob", "role": "editor"}).json()["invite"]
+        bob.patch(f"/api/collab/invites/{invitation['id']}?action=accept")
+        assert bob.post(path + "/duplicate").status_code in (403, 404)
+        copied = alice.post(path + "/duplicate").json()["page"]
+        assert copied["parent_id"] == page["parent_id"]
+        copied_path = f"/api/collab/pages/{copied['id']}"
+        assert alice.get(copied_path + "/document").json()["legacy_markdown"] == "## Preserved findings"
+        assert alice.get(copied_path).json()["shares"] == []
+        assert bob.get(copied_path).status_code == 404
 
 
 def test_notebook_first_use_migrations_are_safe_under_concurrent_requests():

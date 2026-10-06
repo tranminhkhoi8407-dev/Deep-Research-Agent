@@ -6,7 +6,7 @@ export interface ProfileCompletion {
 }
 
 const fields = ['mathematics', 'physics', 'chemistry', 'biology', 'artificial-intelligence'];
-const notebookRoute = /^#\/collab(?:\/(?:page|project)\/[a-f0-9]{32})?$/;
+const notebookRoute = /^#\/(?:collab(?:\/(?:page|project)\/[a-f0-9]{32})?|fields(?:\/(?:guide|toolkit|(?:mathematics|physics|chemistry|biology|artificial-intelligence)(?:\/page\/[a-f0-9]{32})?))?)$/;
 
 export function profileSetupHash(request: ProfileCompletion): string {
   const params = new URLSearchParams({ complete: 'name', return: notebookRoute.test(request.returnHash) ? request.returnHash : '#/collab' });

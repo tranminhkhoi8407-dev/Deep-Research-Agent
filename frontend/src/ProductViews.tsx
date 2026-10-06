@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ResearchEvidence, type ResearchReportData } from './ResearchEvidence';
 import { LibraryLanding } from './LibraryLanding';
 import type { ScholarlyFieldId } from './ScholarlyCatalog';
 
@@ -64,6 +65,7 @@ export interface StoredReportSummary {
 
 export interface StoredReportDetail extends StoredReportSummary {
   final_report: string;
+  report_data?: ResearchReportData | null;
 }
 
 const copy = {
@@ -114,7 +116,7 @@ const copy = {
       selectTitle: 'Chọn một báo cáo để đọc',
       selectDescription: 'Nội dung đầy đủ và các thao tác sẽ xuất hiện tại đây.',
       copy: 'Sao chép',
-      download: 'Tải Markdown',
+      download: 'Tải PDF',
       delete: 'Xóa báo cáo',
       sources: 'nguồn',
     },
@@ -197,7 +199,7 @@ const copy = {
       selectTitle: 'Select a report to read',
       selectDescription: 'The full content and report actions will appear here.',
       copy: 'Copy',
-      download: 'Download Markdown',
+      download: 'Download PDF',
       delete: 'Delete report',
       sources: 'sources',
     },
@@ -297,7 +299,7 @@ interface WorkspaceHubProps {
   researchDepth: ResearchDepth;
   maxAnalysts: number;
   autoApprove: boolean;
-  onStartTopic: (topic?: string) => void;
+  onStartTopic: (topic?: string, paper?: { input: string; field: string }) => void;
   onOpenReport: (report: StoredReportSummary) => void;
   onDeleteReport: (report: StoredReportSummary) => void;
   onCopyReport: (report: StoredReportDetail) => void;
@@ -427,7 +429,7 @@ export function WorkspaceHub(props: WorkspaceHubProps) {
 
   if (view === 'reports') {
     if (librarySection === 'home') return <div className="hub-view"><LibraryLanding language={language} reportCount={reports.length} onSelectField={(field) => { setSelectedField(field); setLibrarySection('papers'); }} onReports={() => setLibrarySection('reports')} /></div>;
-    if (librarySection === 'papers') return <div className="hub-view"><button type="button" className="library-back" onClick={() => setLibrarySection('home')}><ArrowLeft size={18} />{language === 'vi' ? 'Tất cả lĩnh vực' : 'All disciplines'}</button><Suspense fallback={<div className="paper-library__empty">{language === 'vi' ? 'Đang mở thư viện bài báo…' : 'Opening paper library…'}</div>}><PaperLibrary key={selectedField} fieldId={selectedField} language={language} apiBase={props.apiBase} onStartResearch={(topic) => props.onStartTopic(topic)} /></Suspense></div>;
+    if (librarySection === 'papers') return <div className="hub-view"><button type="button" className="library-back" onClick={() => setLibrarySection('home')}><ArrowLeft size={18} />{language === 'vi' ? 'Tất cả lĩnh vực' : 'All disciplines'}</button><Suspense fallback={<div className="paper-library__empty">{language === 'vi' ? 'Đang mở thư viện bài báo…' : 'Opening paper library…'}</div>}><PaperLibrary key={selectedField} fieldId={selectedField} language={language} apiBase={props.apiBase} onStartResearch={(topic, paper) => props.onStartTopic(topic, paper)} /></Suspense></div>;
     return (
       <div className="hub-view">
         <button type="button" className="library-back" onClick={() => setLibrarySection('home')}><ArrowLeft size={18} />{language === 'vi' ? 'Tất cả lĩnh vực' : 'All disciplines'}</button>
@@ -472,7 +474,7 @@ export function WorkspaceHub(props: WorkspaceHubProps) {
                     <button className="icon-button danger-button" type="button" onClick={() => props.onDeleteReport(props.selectedReport!)} aria-label={t.reports.delete}><Trash2 size={16} /></button>
                   </div>
                 </div>
-                <article className="report-paper library-paper"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, ...linkProps }) => <a {...linkProps} target="_blank" rel="noreferrer">{children}</a> }}>{props.selectedReport.final_report}</ReactMarkdown></article>
+                {props.selectedReport.report_data ? <ResearchEvidence key={props.selectedReport.id} data={props.selectedReport.report_data} apiBase={props.apiBase} reportId={props.selectedReport.id} /> : <article className="report-paper library-paper"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, ...linkProps }) => <a {...linkProps} target="_blank" rel="noreferrer">{children}</a> }}>{props.selectedReport.final_report}</ReactMarkdown></article>}
               </>
             ) : <div className="compact-empty large"><BookOpen size={32} /><h3>{t.reports.selectTitle}</h3><p>{t.reports.selectDescription}</p></div>}
           </section>

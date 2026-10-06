@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { profileCompletionFromHash, profileSetupHash, type ProfileCompletion } from './profileNavigation';
+import { fieldRoute } from './fieldNavigation';
 import {
   AlertCircle,
   ArrowRight,
@@ -28,6 +29,10 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ResearchSetup, defaultResearchOptions, initialResearchOptions, type ResearchOptions } from "./ResearchSetup";
+import { downloadReportArtifact, fetchReportArtifact } from "./reportExports";
+import { hasResearchInput, researchOutcome } from "./researchForm";
+import { ResearchEvidence, type ResearchReportData } from "./ResearchEvidence";
 import {
   ProductNavigation,
   WorkspaceHub,
@@ -59,8 +64,8 @@ import {
   type InformationView,
 } from "./InformationPages";
 
-const DomainHub = lazy(() =>
-  import("./DomainHub").then((module) => ({ default: module.DomainHub })),
+const FieldsPage = lazy(() =>
+  import("./FieldWorkspace").then((module) => ({ default: module.FieldsPage })),
 );
 const GuidedTour = lazy(() =>
   import("./GuidedTour").then((module) => ({ default: module.GuidedTour })),
@@ -80,7 +85,9 @@ const CollaborationHub = lazy(() =>
 
 function routedViewFromHash(
   hash = window.location.hash,
-): "guide" | "pricing" | "profile" | "collab" | null {
+): "guide" | "pricing" | "profile" | "collab" | "domains" | "reports" | null {
+  if (hash === '#/library') return 'reports';
+  if (/^#\/fields(?:\/|$)/.test(hash)) return "domains";
   if (/^#\/guide(?:\/|$)/.test(hash)) return "guide";
   if (/^#\/pricing(?:\/|$)/.test(hash)) return "pricing";
   if (/^#\/profile(?:\/|\?|$)/.test(hash)) return "profile";
@@ -95,6 +102,7 @@ type Status =
   | "review_analysts"
   | "review_sections"
   | "completed"
+  | "partial"
   | "error";
 type Phase = "setup" | "analysts" | "research" | "synthesis" | "done";
 
@@ -107,6 +115,7 @@ interface Analyst {
 
 interface ServerMessage {
   event: string;
+  outcome?: 'completed' | 'partial' | 'failed';
   node?: string;
   details?: string;
   analysts?: Analyst[];
@@ -118,6 +127,7 @@ interface ServerMessage {
   source_count?: number;
   research_depth?: ResearchDepth;
   audit_notes?: string;
+  report_data?: ResearchReportData;
 }
 
 interface ActivityItem {
@@ -138,28 +148,28 @@ const translations = {
       offline: "Backend offline",
     },
     showcase: {
-      badge: "Multi-agent research engine",
+      badge: "Evidence-first research engine",
       title: "Từ một câu hỏi đến báo cáo có nguồn.",
       description:
-        "Không gian nghiên cứu chuyên sâu kết hợp Gemini, nhiều analyst AI và tìm kiếm đa nguồn để biến một brief thành báo cáo có cấu trúc.",
+        "Đọc nguồn có chọn lọc, dùng lại kho tài liệu và đối chiếu bằng chứng để tạo báo cáo theo yêu cầu — với ngân sách rõ ràng.",
       cardTitle: "RESEARCH PIPELINE",
       cardBadge: "LIVE WORKFLOW",
       topicLabel: "Brief đang phân tích",
       sampleTopic: "Chủ đề của bạn sẽ xuất hiện ở đây",
       steps: [
         "Đặt vấn đề",
-        "Tạo góc nhìn",
+        "Đọc nguồn gốc",
         "Tìm bằng chứng",
         "Biên tập report",
       ],
       metrics: [
-        { value: "2+", label: "nguồn tìm kiếm" },
-        { value: "1–3", label: "analyst song song" },
-        { value: ".MD", label: "report tải xuống" },
+        { value: "VI / EN", label: "ngôn ngữ báo cáo" },
+        { value: "01", label: "kho bằng chứng dùng chung" },
+        { value: "PDF + LaTeX", label: "report tải xuống" },
       ],
       assurances: [
-        "Tavily + Wikipedia",
-        "Gemini tổng hợp",
+        "Web + PDF gốc",
+        "Nhận xét gắn dẫn chứng",
         "LangGraph điều phối",
       ],
     },
@@ -168,6 +178,14 @@ const translations = {
       title: "Bạn muốn tìm hiểu điều gì?",
       description: "Mô tả chủ đề, phạm vi và câu hỏi mà báo cáo cần trả lời.",
       topicLabel: "Chủ đề nghiên cứu",
+      paperTitle: "Bạn muốn phân tích bài báo nào?",
+      paperDescription: "Giải thích bài toán, phương pháp, kết quả và giới hạn với dẫn chứng từ bài báo.",
+      paperTopicLabel: "Yêu cầu phân tích thêm (không bắt buộc)",
+      paperPlaceholder: "Ví dụ: Giải thích phương pháp cho người mới hoặc đánh giá thiết kế thí nghiệm",
+      paperHint: "Để trống để phân tích tổng quan bài báo theo lĩnh vực và ngôn ngữ báo cáo đã chọn. Chỉ cần PDF hoặc link bài báo ở bên dưới.",
+      paperWaiting: "Chọn bài báo để phân tích",
+      paperStart: "Bắt đầu phân tích paper",
+      paperRestart: "Phân tích lại paper",
       placeholder:
         "Ví dụ: Phân tích ưu, nhược điểm và chi phí triển khai chatbot RAG cho doanh nghiệp bán lẻ Việt Nam",
       characters: "ký tự",
@@ -185,7 +203,7 @@ const translations = {
       ],
       depthLabel: "Độ sâu nghiên cứu",
       depthDescription:
-        "Mỗi mức thay đổi số vòng hỏi, lượng truy vấn và bước kiểm chứng.",
+        "Mỗi mức đặt giới hạn tìm kiếm, đọc tiếp và đối chiếu bằng chứng.",
       depthOptions: {
         quick: {
           title: "Nhanh",
@@ -194,7 +212,7 @@ const translations = {
         },
         standard: {
           title: "Tiêu chuẩn",
-          description: "Đa góc nhìn và lập kế hoạch",
+          description: "Đọc nguồn và kiểm tra thiếu hụt",
           meta: "1 vòng · 2 query",
         },
         deep: {
@@ -211,7 +229,7 @@ const translations = {
       restart: "Nghiên cứu lại chủ đề này",
       stop: "Dừng phiên này",
       backendHint: "Hãy khởi động backend trước khi bắt đầu.",
-      modelNote: "Gemini tạo nội dung · Tavily và Wikipedia cung cấp nguồn",
+      modelNote: "Đoạn được chọn gửi tới model đã cấu hình · Tavily tìm nguồn khi cần",
     },
     status: {
       idle: "Sẵn sàng bắt đầu",
@@ -220,12 +238,13 @@ const translations = {
       review_analysts: "Cần bạn duyệt nhóm analyst",
       review_sections: "Cần bạn duyệt các section",
       completed: "Báo cáo đã hoàn tất",
+      partial: "Báo cáo còn thiếu một phần",
       error: "Phiên nghiên cứu gặp lỗi",
     },
     phases: {
-      setup: { label: "Chuẩn bị", caption: "Kết nối và nạp hồ sơ" },
-      analysts: { label: "Góc nhìn", caption: "Thiết kế nhóm analyst" },
-      research: { label: "Nghiên cứu", caption: "Phỏng vấn và tìm nguồn" },
+      setup: { label: "Chuẩn bị", caption: "Kết nối và kiểm tra yêu cầu" },
+      analysts: { label: "Lập kế hoạch", caption: "Câu hỏi và phạm vi" },
+      research: { label: "Nghiên cứu", caption: "Đọc nguồn và tìm bổ sung" },
       synthesis: { label: "Tổng hợp", caption: "Biên tập báo cáo" },
       done: { label: "Hoàn tất", caption: "Report sẵn sàng" },
     },
@@ -240,7 +259,7 @@ const translations = {
       write_report: "Đã viết nội dung chính",
       write_introduction: "Đã viết phần mở đầu",
       write_conclusion: "Đã viết phần kết luận",
-      finalize_report: "Đã ráp báo cáo hoàn chỉnh",
+      finalize_report: "Đã lưu kết quả và trạng thái kiểm chứng",
       audit_report: "Đã kiểm tra bằng chứng và citation",
       save_research_profile: "Đã lưu hồ sơ nghiên cứu",
     },
@@ -250,8 +269,8 @@ const translations = {
       progressLabel: "Tiến trình nghiên cứu",
       emptyTitle: "Một brief, nhiều bước tự động",
       emptyDescription:
-        "Agent sẽ thiết kế góc nhìn, tìm nguồn, phỏng vấn và biên tập thành report Markdown.",
-      facts: ["Analyst theo chủ đề", "Tìm kiếm đa nguồn", "Report có cấu trúc"],
+        "Agent lập câu hỏi, đọc đoạn liên quan, tìm bổ sung có giới hạn và viết báo cáo có dẫn chứng.",
+      facts: ["Ngôn ngữ độc lập", "Bằng chứng dùng chung", "Báo cáo có cấu trúc"],
       runningSuffix: "Bạn có thể để cửa sổ này chạy nền.",
       analystReviewTitle: "Duyệt nhóm analyst",
       analystReviewDescription:
@@ -259,7 +278,7 @@ const translations = {
       analystFeedback: "Ví dụ: thêm góc nhìn về chi phí triển khai...",
       sectionReviewTitle: "Duyệt nội dung nghiên cứu",
       sectionReviewDescription:
-        "Các interview đã xong. Kiểm tra phạm vi trước khi biên tập report.",
+        "Bản nháp đã được kiểm tra. Có thể góp ý chỉnh sửa nếu ngân sách còn đủ.",
       sectionFeedback: "Ví dụ: nhấn mạnh thêm rủi ro và số liệu thị trường...",
       feedbackLabel: "Feedback chỉnh sửa",
       submitFeedback: "Gửi chỉnh sửa",
@@ -270,8 +289,8 @@ const translations = {
       reportReady: "Report hoàn tất",
       sourcesUsed: "nguồn đã dùng",
       audited: "Đã audit citation",
-      copyReport: "Sao chép report",
-      download: "Tải Markdown",
+      copyReport: "Sao chép LaTeX",
+      download: "Tải PDF",
       copied: "Đã sao chép report",
       recentActivity: "Hoạt động gần đây",
       steps: "bước",
@@ -301,28 +320,28 @@ const translations = {
       offline: "Backend offline",
     },
     showcase: {
-      badge: "Multi-agent research engine",
+      badge: "Evidence-first research engine",
       title: "From one question to a sourced report.",
       description:
-        "A focused research workspace combining Gemini, multiple AI analysts, and multi-source search to turn a brief into a structured report.",
+        "Read selected original sources, reuse documents and check evidence to produce a report that follows your brief — within clear budgets.",
       cardTitle: "RESEARCH PIPELINE",
       cardBadge: "LIVE WORKFLOW",
       topicLabel: "Brief in focus",
       sampleTopic: "Your research topic will appear here",
       steps: [
         "Frame the brief",
-        "Create viewpoints",
+        "Read original sources",
         "Find evidence",
         "Edit the report",
       ],
       metrics: [
-        { value: "2+", label: "search sources" },
-        { value: "1–3", label: "parallel analysts" },
-        { value: ".MD", label: "downloadable report" },
+        { value: "VI / EN", label: "report languages" },
+        { value: "01", label: "shared evidence store" },
+        { value: "PDF + LaTeX", label: "downloadable report" },
       ],
       assurances: [
-        "Tavily + Wikipedia",
-        "Gemini synthesis",
+        "Original web + PDFs",
+        "Claim-linked evidence",
         "LangGraph orchestration",
       ],
     },
@@ -332,6 +351,14 @@ const translations = {
       description:
         "Describe the topic, scope, and questions the report should answer.",
       topicLabel: "Research topic",
+      paperTitle: "Which paper would you like to analyze?",
+      paperDescription: "Explain the problem, methods, results and limitations with evidence from the paper.",
+      paperTopicLabel: "Additional analysis instructions (optional)",
+      paperPlaceholder: "Example: Explain the method for a beginner or review the experimental design",
+      paperHint: "Leave blank for a general analysis in the selected discipline and report language. Only a PDF or paper link below is required.",
+      paperWaiting: "Select a paper to analyze",
+      paperStart: "Analyze paper",
+      paperRestart: "Analyze paper again",
       placeholder:
         "Example: Analyze the benefits, limitations, and implementation cost of RAG chatbots for Vietnamese retailers",
       characters: "characters",
@@ -345,7 +372,7 @@ const translations = {
       analystOptions: ["1 · Save quota", "2 · More viewpoints", "3 · In depth"],
       depthLabel: "Research depth",
       depthDescription:
-        "Each level changes interview rounds, query volume, and verification.",
+        "Each level bounds searches, follow-up reading and evidence checking.",
       depthOptions: {
         quick: {
           title: "Quick",
@@ -354,7 +381,7 @@ const translations = {
         },
         standard: {
           title: "Standard",
-          description: "Multiple viewpoints and planning",
+          description: "Source reading and gap checking",
           meta: "1 round · 2 queries",
         },
         deep: {
@@ -372,7 +399,7 @@ const translations = {
       stop: "Stop this session",
       backendHint: "Start the backend before beginning.",
       modelNote:
-        "Gemini creates content · Tavily and Wikipedia provide sources",
+        "Selected excerpts go to your configured model · Tavily finds sources when needed",
     },
     status: {
       idle: "Ready to begin",
@@ -381,12 +408,13 @@ const translations = {
       review_analysts: "Review the analyst team",
       review_sections: "Review the report sections",
       completed: "Your report is complete",
+      partial: "Your report is partial",
       error: "The research session failed",
     },
     phases: {
-      setup: { label: "Setup", caption: "Connect and load profile" },
-      analysts: { label: "Viewpoints", caption: "Design the analyst team" },
-      research: { label: "Research", caption: "Interview and find sources" },
+      setup: { label: "Setup", caption: "Connect and validate request" },
+      analysts: { label: "Plan", caption: "Questions and scope" },
+      research: { label: "Research", caption: "Read sources and fill gaps" },
       synthesis: { label: "Synthesis", caption: "Edit the report" },
       done: { label: "Complete", caption: "Report is ready" },
     },
@@ -401,7 +429,7 @@ const translations = {
       write_report: "Main report written",
       write_introduction: "Introduction written",
       write_conclusion: "Conclusion written",
-      finalize_report: "Final report assembled",
+      finalize_report: "Result and verification status saved",
       audit_report: "Evidence and citations audited",
       save_research_profile: "Research profile saved",
     },
@@ -411,9 +439,9 @@ const translations = {
       progressLabel: "Research progress",
       emptyTitle: "One brief, many automated steps",
       emptyDescription:
-        "The agents design viewpoints, find sources, conduct interviews, and edit a Markdown report.",
+        "Plan questions, read relevant excerpts, fill gaps within budget and write a sourced report.",
       facts: [
-        "Topic-specific analysts",
+        "Independent report language",
         "Multi-source search",
         "Structured report",
       ],
@@ -425,7 +453,7 @@ const translations = {
         "Example: add a viewpoint focused on implementation cost...",
       sectionReviewTitle: "Review the research content",
       sectionReviewDescription:
-        "The interviews are done. Check the scope before report editing.",
+        "The draft was checked. Editorial changes can be applied if budget remains.",
       sectionFeedback: "Example: emphasize risks and market data...",
       feedbackLabel: "Revision feedback",
       submitFeedback: "Submit revision",
@@ -436,8 +464,8 @@ const translations = {
       reportReady: "Report complete",
       sourcesUsed: "sources used",
       audited: "Citations audited",
-      copyReport: "Copy report",
-      download: "Download Markdown",
+      copyReport: "Copy LaTeX",
+      download: "Download PDF",
       copied: "Report copied",
       recentActivity: "Recent activity",
       steps: "steps",
@@ -531,9 +559,16 @@ export default function App() {
   const [activeView, setActiveView] = useState<AppView>(
     () => routedViewFromHash() || "overview",
   );
+  const [routeHash, setRouteHash] = useState(window.location.hash);
   const [informationView, setInformationView] =
     useState<InformationView | null>(() => informationViewFromHash());
   const [topic, setTopic] = useState("");
+  const [researchOptions, setResearchOptions] = useState<ResearchOptions>(initialResearchOptions);
+  useEffect(() => {
+    try { localStorage.setItem('nexora-report-preferences-v1', JSON.stringify({ reportLanguage: researchOptions.reportLanguage, preferredReportLanguage: researchOptions.preferredReportLanguage, detail: researchOptions.detail })); } catch { /* Optional preference storage. */ }
+  }, [researchOptions.reportLanguage, researchOptions.preferredReportLanguage, researchOptions.detail]);
+  const [uploadingPaper, setUploadingPaper] = useState(false);
+  const [reportData, setReportData] = useState<ResearchReportData | null>(null);
   const [researchContext, setResearchContext] =
     useState<DomainResearchPayload | null>(null);
   const [collabField, setCollabField] = useState<DomainResearchPayload['domain'] | null>(null);
@@ -637,6 +672,7 @@ export default function App() {
 
   useEffect(() => {
     const syncRoute = () => {
+      setRouteHash(window.location.hash);
       const infoView = informationViewFromHash();
       setInformationView(infoView);
       const routedView = routedViewFromHash();
@@ -644,7 +680,7 @@ export default function App() {
       if (routedView) setActiveView(routedView);
       else if (!infoView)
         setActiveView((current) =>
-          current === "guide" || current === "pricing" || current === "profile" || current === "collab"
+          current === "guide" || current === "pricing" || current === "profile" || current === "collab" || current === "domains"
             ? "overview"
             : current,
         );
@@ -658,7 +694,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (authStatus !== 'authenticated' || !authUser || authUser.public_name?.trim() || activeView !== 'collab' || informationView) return;
+    // Preferences stay consistent when a field is open in a separate tab.
+    const syncPreferences = (event: StorageEvent) => {
+      if (event.key === 'deep-research-appearance') setAppearance(event.newValue === 'light' || event.newValue === 'dark' ? event.newValue : 'system');
+      if (event.key === 'deep-research-language') setLanguage(event.newValue === 'vi' ? 'vi' : 'en');
+    };
+    window.addEventListener('storage', syncPreferences);
+    return () => window.removeEventListener('storage', syncPreferences);
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !authUser || authUser.public_name?.trim() || !['collab', 'domains'].includes(activeView) || informationView) return;
     const setupHash = profileSetupHash({ returnHash: window.location.hash || '#/collab', field: collabField });
     const request = profileCompletionFromHash(setupHash);
     setProfileCompletion(request);
@@ -756,6 +802,10 @@ export default function App() {
     if (authStatus === "unauthenticated") {
       setStoredReports([]);
       setSelectedReport(null);
+      setReportData(null);
+      setFinalReport("");
+      setResearchOptions(defaultResearchOptions);
+      setUploadingPaper(false);
     }
   }, [authStatus]);
 
@@ -779,8 +829,9 @@ export default function App() {
     "review_analysts",
     "review_sections",
   ].includes(status);
-  const canStart = topic.trim().length >= 8 && !isBusy && health === "online";
-  const activeTopic = topic.trim() || t.showcase.sampleTopic;
+  const isPaperAnalysis = researchOptions.mode === "paper";
+  const canStart = hasResearchInput(topic, researchOptions) && !isBusy && !uploadingPaper && health === "online";
+  const activeTopic = topic.trim() || (isPaperAnalysis ? researchOptions.documentName || researchOptions.paperInput.trim() || t.brief.paperWaiting : t.showcase.sampleTopic);
   const statusCopy = useMemo(() => t.status[status], [status, t]);
   const menuSourceCount = useMemo(
     () =>
@@ -845,7 +896,8 @@ export default function App() {
   };
 
   const navigateTo = (view: AppView) => {
-    if (view === activeView && !informationView) return;
+    if (view === 'domains' && activeView === 'domains' && !informationView) { window.location.hash = '#/fields'; return; }
+    if (view === activeView && !informationView && !(view === 'domains' && window.location.hash !== '#/fields')) return;
     const changeView = () => {
       setProfileCompletion(null);
       setProfileEditRequest(0);
@@ -855,8 +907,9 @@ export default function App() {
       const route =
         view === "guide" || view === "pricing" || view === "profile" || view === "collab"
           ? `${window.location.pathname}#/${view}`
-          : window.location.pathname;
+          : view === 'domains' ? `${window.location.pathname}#/fields` : window.location.pathname;
       window.history.pushState({}, "", route);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const motionAllowed = !window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -878,6 +931,7 @@ export default function App() {
       setProfileEditRequest(0);
       setInformationView(view);
       window.history.pushState({}, "", `${window.location.pathname}#/${view}`);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const motionAllowed = !window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -899,6 +953,7 @@ export default function App() {
     setActiveView('profile');
     setProfileEditRequest((value) => value + 1);
     window.history.pushState({}, '', `${window.location.pathname}#/profile`);
+    setRouteHash(window.location.hash);
     window.scrollTo({ top: 0, behavior: 'auto' });
   };
 
@@ -906,6 +961,7 @@ export default function App() {
     const changeView = () => {
       setInformationView(null);
       window.history.pushState({}, "", window.location.pathname);
+      setRouteHash(window.location.hash);
       window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     };
     const transitionDocument = document as Document & {
@@ -927,6 +983,7 @@ export default function App() {
     setAppearance("system");
     setLanguage("en");
     setResearchDepth("standard");
+    setResearchOptions(defaultResearchOptions);
     setMaxAnalysts(2);
     setAutoApprove(true);
     setNotice(
@@ -964,6 +1021,18 @@ export default function App() {
   const handleMessage = (message: ServerMessage) => {
     switch (message.event) {
       case "node_complete": {
+        const modernNodes: Record<string, [Phase, string]> = {
+          understand_brief: ["analysts", language === "vi" ? "Hiểu yêu cầu và ngôn ngữ" : "Understand brief and language"],
+          collect_evidence: ["research", language === "vi" ? "Đọc và lưu bằng chứng" : "Read and cache evidence"],
+          assess_coverage: ["research", language === "vi" ? "Kiểm tra câu hỏi còn thiếu" : "Check evidence gaps"],
+          draft_report: ["synthesis", language === "vi" ? "Viết báo cáo có cấu trúc" : "Write structured report"],
+          audit_evidence: ["synthesis", language === "vi" ? "Đối chiếu nhận xét với trích đoạn" : "Check claims against excerpts"],
+          improve_report: ["synthesis", language === "vi" ? "Bổ sung giải thích và kiểm tra chất lượng" : "Improve explanation and check quality"],
+          apply_editorial_feedback: ["synthesis", language === "vi" ? "Áp dụng góp ý trong ngân sách" : "Apply feedback within budget"],
+        };
+        if (message.node && modernNodes[message.node]) {
+          setPhase(modernNodes[message.node][0]); pushActivity(modernNodes[message.node][1], message.details); break;
+        }
         const node = message.node as NodeKey | undefined;
         const knownNode = node && node in nodePhases ? node : undefined;
         setPhase(knownNode ? nodePhases[knownNode] : phase);
@@ -979,6 +1048,7 @@ export default function App() {
         break;
       case "sections_completed":
         setSections(message.sections || []);
+        setReportData(message.report_data || null);
         setPhase("synthesis");
         if (!autoApproveRef.current) setStatus("review_sections");
         break;
@@ -991,17 +1061,21 @@ export default function App() {
           setStatus("review_sections");
         }
         break;
-      case "report_complete":
+      case "report_complete": {
         finishedRef.current = true;
         setFinalReport(message.final_report || "");
         setServerPath(message.filepath || "");
         setSourceCount(message.source_count || 0);
         setAuditNotes(message.audit_notes || "");
+        setReportData(message.report_data || null);
         setPhase("done");
-        setStatus("completed");
-        pushActivity(t.activity.completed);
+        const outcome = message.outcome || researchOutcome(message.report_data);
+        setStatus(outcome === 'failed' ? 'error' : outcome);
+        if (outcome === 'failed') setErrorMessage(language === 'vi' ? 'Chưa tạo được nội dung phân tích có dẫn chứng. Xem thông tin lỗi và nguồn đã đọc bên dưới; đây không phải báo cáo hoàn chỉnh.' : 'No sourced analysis could be produced. Inspect the diagnostics and retrieved sources below; this is not a completed report.');
+        pushActivity(outcome === 'completed' ? t.activity.completed : outcome === 'partial' ? t.status.partial : t.workspace.errorTitle);
         void loadReports();
         break;
+      }
       case "error":
         finishedRef.current = true;
         setErrorMessage(message.details || message.message || t.errors.unknown);
@@ -1022,6 +1096,7 @@ export default function App() {
     setSections([]);
     setActivities([]);
     setFinalReport("");
+    setReportData(null);
     setServerPath("");
     setSourceCount(0);
     setAuditNotes("");
@@ -1038,9 +1113,15 @@ export default function App() {
           event: "start_research",
           topic: topic.trim(),
           max_analysts: maxAnalysts,
-          report_language: language,
+          report_language: researchOptions.reportLanguage,
+          report_detail: researchOptions.detail,
+          preferred_report_language: researchOptions.preferredReportLanguage,
+          analysis_mode: researchOptions.mode,
+          paper_input: researchOptions.mode === "paper" ? researchOptions.paperInput.trim() : "",
+          document_id: researchOptions.mode === "paper" ? researchOptions.documentId : "",
+          budget: researchOptions.budget,
           research_depth: researchDepth,
-          research_domain: researchContext?.domain || "general",
+          research_domain: researchOptions.mode === "paper" ? researchOptions.field : researchContext?.domain || "general",
           research_category: researchContext?.category || "",
           research_notes: researchContext?.researchNotes || "",
           latex_context: researchContext?.latexContext || "",
@@ -1089,6 +1170,8 @@ export default function App() {
     setPhase("setup");
     setTopic("");
     setResearchContext(null);
+    setResearchOptions(initialResearchOptions());
+    setReportData(null);
     setFinalReport("");
     setServerPath("");
     setSourceCount(0);
@@ -1101,24 +1184,22 @@ export default function App() {
   };
 
   const downloadReport = () => {
-    const blob = new Blob([finalReport], {
-      type: "text/markdown;charset=utf-8",
-    });
-    const href = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = `${language === "vi" ? "nghien-cuu" : "research"}-${new Date().toISOString().slice(0, 10)}.md`;
-    anchor.click();
-    URL.revokeObjectURL(href);
+    const reportId = serverPath.split(/[\\/]/).pop();
+    if (!reportId) { setNotice(language === 'vi' ? 'Chưa lưu được report để xuất.' : 'Report must be saved before export.'); return; }
+    void downloadReportArtifact(API_BASE, reportId, 'pdf').catch(reason => setNotice(reason instanceof Error ? reason.message : 'Export failed'));
   };
 
   const copyReport = async () => {
-    await navigator.clipboard.writeText(finalReport);
-    setNotice(t.workspace.copied);
-    window.setTimeout(() => setNotice(""), 2200);
+    const reportId = serverPath.split(/[\\/]/).pop();
+    if (!reportId) return;
+    try {
+      await navigator.clipboard.writeText(await (await fetchReportArtifact(API_BASE, reportId, 'tex')).text());
+      setNotice(t.workspace.copied);
+      window.setTimeout(() => setNotice(""), 2200);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : 'Export failed'); }
   };
 
-  const openResearch = (suggestedTopic?: string) => {
+  const openResearch = (suggestedTopic?: string, paper?: { input: string; field: string }) => {
     if (isBusy) {
       navigateTo("research");
       return;
@@ -1126,11 +1207,13 @@ export default function App() {
     if (
       suggestedTopic !== undefined ||
       status === "completed" ||
+      status === "partial" ||
       status === "error"
     ) {
       startOver();
     }
     if (suggestedTopic) setTopic(suggestedTopic);
+    if (paper) setResearchOptions({ ...initialResearchOptions(), mode: "paper", paperInput: paper.input, field: paper.field });
     navigateTo("research");
   };
 
@@ -1148,6 +1231,7 @@ export default function App() {
     startOver();
     setResearchContext(payload);
     setTopic(payload.topic);
+    if (payload.analysisMode === "paper") setResearchOptions({ ...initialResearchOptions(), mode: "paper", field: payload.domain });
     navigateTo("research");
     setNotice(
       language === "vi"
@@ -1206,21 +1290,15 @@ export default function App() {
   };
 
   const copyStoredReport = async (report: StoredReportDetail) => {
-    await navigator.clipboard.writeText(report.final_report);
-    setNotice(t.workspace.copied);
-    window.setTimeout(() => setNotice(""), 2200);
+    try {
+      await navigator.clipboard.writeText(await (await fetchReportArtifact(API_BASE, report.id, 'tex')).text());
+      setNotice(t.workspace.copied);
+      window.setTimeout(() => setNotice(""), 2200);
+    } catch (reason) { setNotice(reason instanceof Error ? reason.message : 'Export failed'); }
   };
 
   const downloadStoredReport = (report: StoredReportDetail) => {
-    const blob = new Blob([report.final_report], {
-      type: "text/markdown;charset=utf-8",
-    });
-    const href = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = href;
-    anchor.download = report.id;
-    anchor.click();
-    URL.revokeObjectURL(href);
+    void downloadReportArtifact(API_BASE, report.id, 'pdf').catch(reason => setNotice(reason instanceof Error ? reason.message : 'Export failed'));
   };
 
   const exportWorkspace = async () => {
@@ -1304,9 +1382,11 @@ export default function App() {
     );
   }
 
+  const standaloneField = activeView === 'domains' && !informationView && (!!fieldRoute(routeHash) || routeHash === '#/fields/guide');
   return (
-    <div className="app-shell app-shell--ready">
+    <div className={`app-shell app-shell--ready${standaloneField ? ' app-shell--field' : ''}`}>
       {showWelcome && <WelcomeTransition user={authUser} language={language} />}
+      {!standaloneField && <>
       <header className="topbar">
         <button
           className="brand brand-button"
@@ -1360,6 +1440,7 @@ export default function App() {
         reportCount={storedReports.length}
         onNavigate={(view) => { if (view === 'collab') setCollabField(null); navigateTo(view); }}
       />
+      </>}
 
       {informationView ? (
         <main
@@ -1452,9 +1533,10 @@ export default function App() {
                 setAuthUser(updated);
                 if (profileCompletion && updated.public_name?.trim()) {
                   setCollabField(profileCompletion.field);
-                  setActiveView('collab');
+                  setActiveView(profileCompletion.returnHash.startsWith('#/fields') ? 'domains' : 'collab');
                   setInformationView(null);
                   window.history.replaceState({}, '', `${window.location.pathname}${profileCompletion.returnHash}`);
+                  setRouteHash(window.location.hash);
                   setProfileCompletion(null);
                   setProfileEditRequest(0);
                   window.scrollTo({ top: 0, behavior: 'auto' });
@@ -1536,8 +1618,8 @@ export default function App() {
             <aside className="control-panel">
               <div className="panel-heading">
                 <span className="eyebrow">{t.brief.eyebrow}</span>
-                <h2>{t.brief.title}</h2>
-                <p>{t.brief.description}</p>
+                <h2>{isPaperAnalysis ? t.brief.paperTitle : t.brief.title}</h2>
+                <p>{isPaperAnalysis ? t.brief.paperDescription : t.brief.description}</p>
               </div>
 
               {researchContext && (
@@ -1577,14 +1659,15 @@ export default function App() {
               )}
 
               <label className="field-label" htmlFor="topic">
-                {t.brief.topicLabel}
+                {isPaperAnalysis ? t.brief.paperTopicLabel : t.brief.topicLabel}
               </label>
               <div className="topic-field" data-tour="research-topic">
                 <textarea
                   id="topic"
                   value={topic}
                   onChange={(event) => setTopic(event.target.value)}
-                  placeholder={t.brief.placeholder}
+                  placeholder={isPaperAnalysis ? t.brief.paperPlaceholder : t.brief.placeholder}
+                  aria-describedby={isPaperAnalysis ? "paper-prompt-hint" : undefined}
                   rows={6}
                   disabled={isBusy}
                 />
@@ -1593,7 +1676,9 @@ export default function App() {
                 </span>
               </div>
 
-              {status === "idle" && !topic && (
+              {isPaperAnalysis && <p id="paper-prompt-hint" className="research-paper-prompt-hint">{t.brief.paperHint}</p>}
+
+              {status === "idle" && !topic && !isPaperAnalysis && (
                 <div className="idea-list" aria-label={t.brief.suggestions}>
                   <span>{t.brief.suggestions}</span>
                   {t.brief.topics.map((idea) => (
@@ -1643,32 +1728,29 @@ export default function App() {
                           {depth === "deep" && <Sparkles size={13} />}
                         </span>
                         <small>{option.description}</small>
-                        <em>{option.meta}</em>
+                        <em>{language === "vi" ? (depth === "quick" ? "Tối đa 2 lượt tìm · 3 tài liệu" : depth === "standard" ? "Tối đa 6 lượt tìm · 8 tài liệu" : "Tối đa 10 lượt tìm · 12 tài liệu") : (depth === "quick" ? "Up to 2 searches · 3 documents" : depth === "standard" ? "Up to 6 searches · 8 documents" : "Up to 10 searches · 12 documents")}</em>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
+              <ResearchSetup language={language} apiBase={API_BASE} depth={researchDepth} busy={isBusy} value={researchOptions} onChange={setResearchOptions} onUploading={setUploadingPaper} />
               <div className="settings-grid" data-tour="research-options">
                 <div>
                   <label className="field-label" htmlFor="analysts">
-                    {t.brief.analystsLabel}
+                    {language === "vi" ? "Cách đọc nguồn" : "Source reading"}
                   </label>
                   <div className="select-wrap">
                     <select
                       id="analysts"
-                      value={maxAnalysts}
+                      value={1}
                       onChange={(event) =>
                         setMaxAnalysts(Number(event.target.value))
                       }
-                      disabled={isBusy}
+                      disabled
                     >
-                      {t.brief.analystOptions.map((option, index) => (
-                        <option key={option} value={index + 1}>
-                          {option}
-                        </option>
-                      ))}
+                      <option value={1}>{language === "vi" ? "Kho bằng chứng dùng chung" : "Shared evidence store"}</option>
                     </select>
                     <ChevronDown size={16} aria-hidden="true" />
                   </div>
@@ -1676,7 +1758,7 @@ export default function App() {
                 <label className="switch-row">
                   <span>
                     <strong>{t.brief.autoApprove}</strong>
-                    <small>{t.brief.autoApproveHint}</small>
+                    <small>{language === "vi" ? "Xuất thẳng sau kiểm tra; tắt để duyệt và gửi góp ý." : "Export after checking; turn off to review and give feedback."}</small>
                   </span>
                   <input
                     type="checkbox"
@@ -1704,7 +1786,7 @@ export default function App() {
                     onClick={startResearch}
                   >
                     <Sparkles size={18} />
-                    {status === "completed" ? t.brief.restart : t.brief.start}
+                    {isPaperAnalysis ? (status === "completed" || status === "partial" ? t.brief.paperRestart : t.brief.paperStart) : (status === "completed" || status === "partial" ? t.brief.restart : t.brief.start)}
                   </button>
                 ) : (
                   <button
@@ -1733,7 +1815,7 @@ export default function App() {
                   <span className="eyebrow">{t.workspace.eyebrow}</span>
                   <h2>{statusCopy}</h2>
                 </div>
-                {status === "completed" && (
+                {(status === "completed" || status === "partial") && (
                   <button
                     className="button button--quiet"
                     type="button"
@@ -1875,7 +1957,7 @@ export default function App() {
                       <p>{t.workspace.sectionReviewDescription}</p>
                     </div>
                   </div>
-                  <div className="section-list">
+                  {reportData ? <ResearchEvidence data={reportData} apiBase={API_BASE} /> : <div className="section-list">
                     {sections.map((section, index) => (
                       <div key={`${section}-${index}`}>
                         <CheckCircle2 size={18} />
@@ -1885,7 +1967,7 @@ export default function App() {
                         </span>
                       </div>
                     ))}
-                  </div>
+                  </div>}
                   <FeedbackComposer
                     value={feedback}
                     onChange={setFeedback}
@@ -1917,13 +1999,15 @@ export default function App() {
                 </div>
               )}
 
-              {status === "completed" && finalReport && (
+              {status === "error" && reportData && <ResearchEvidence data={reportData} apiBase={API_BASE} />}
+
+              {(status === "completed" || status === "partial") && finalReport && (
                 <div className="report-view">
                   <div className="report-toolbar">
                     <div className="report-status">
-                      <CheckCircle2 size={18} />
+                      {status === "partial" ? <AlertCircle size={18} /> : <CheckCircle2 size={18} />}
                       <span>
-                        {serverPath
+                        {status === "partial" ? t.status.partial : serverPath
                           ? t.workspace.reportSaved
                           : t.workspace.reportReady}
                       </span>
@@ -1932,7 +2016,7 @@ export default function App() {
                           {sourceCount} {t.workspace.sourcesUsed}
                         </small>
                       )}
-                      {auditNotes && researchDepth === "deep" && (
+                      {auditNotes && !reportData && researchDepth === "deep" && (
                         <small>{t.workspace.audited}</small>
                       )}
                     </div>
@@ -1955,7 +2039,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  <article className="report-paper">
+                  {reportData ? <ResearchEvidence data={reportData} apiBase={API_BASE} reportId={serverPath.split(/[\\/]/).pop() || undefined} /> : <article className="report-paper">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
@@ -1968,11 +2052,11 @@ export default function App() {
                     >
                       {finalReport}
                     </ReactMarkdown>
-                  </article>
+                  </article>}
                 </div>
               )}
 
-              {activities.length > 0 && status !== "completed" && (
+              {activities.length > 0 && status !== "completed" && status !== "partial" && (
                 <details className="activity-log" open={status === "running"}>
                   <summary>
                     <span>{t.workspace.recentActivity}</span>
@@ -2000,7 +2084,7 @@ export default function App() {
           </section>
         </main>
       ) : activeView === "domains" ? (
-        <main className="product-page domain-page view-enter" key="domains">
+        <main className="product-page fields-page-shell" key="domains">
           <Suspense
             fallback={
               <div className="domain-loading" role="status">
@@ -2013,10 +2097,17 @@ export default function App() {
               </div>
             }
           >
-            <DomainHub
+            <FieldsPage
+              apiBase={API_BASE}
+              user={authUser}
+              reports={storedReports}
               language={language}
-              onStartResearch={openDomainResearch}
-              onOpenNotebook={(field) => { setCollabField(field); navigateTo('collab'); }}
+              onPrepareResearch={openDomainResearch}
+              appearance={appearance}
+              onAppearanceChange={setAppearance}
+              onLanguageChange={setLanguage}
+              onOpenTour={() => setTourRequest('fields')}
+              onLogout={() => void logout()}
             />
           </Suspense>
         </main>
@@ -2081,12 +2172,12 @@ export default function App() {
         </main>
       )}
 
-      <AppFooter
+      {!standaloneField && <AppFooter
         language={language}
         health={health}
         onNavigate={navigateTo}
         onNavigateInformation={navigateToInformation}
-      />
+      />}
 
       {!informationView && <Suspense fallback={null}><GuidedTour
         apiBase={API_BASE}
@@ -2098,6 +2189,7 @@ export default function App() {
         clearRequest={() => setTourRequest(null)}
         onNavigate={navigateTo}
         onResetLibrary={() => setLibraryTourReset((value) => value + 1)}
+        hideLauncher={standaloneField}
       /></Suspense>}
 
       {notice && (

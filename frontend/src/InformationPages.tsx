@@ -237,13 +237,13 @@ const pages: Record<Language, Record<InformationView, InformationDefinition>> = 
     },
     about: {
       eyebrow: 'PRODUCT', title: 'Về Nexora',
-      summary: 'Một workspace nghiên cứu ưu tiên bằng chứng, kết hợp nhiều analyst AI, tìm kiếm nguồn và biên tập báo cáo có cấu trúc.',
+      summary: 'Một workspace đọc nguồn theo câu hỏi, phân tích paper theo lĩnh vực và báo cáo có cấu trúc kèm dẫn chứng.',
       updated: 'Core v0.4.0',
       highlights: ['Evidence-first', 'Multi-agent', 'Self-hosted'],
       related: ['help', 'changelog', 'security'],
       sections: [
         { id: 'mission', title: '1. Mục tiêu', paragraphs: ['Nexora giúp biến câu hỏi mở thành quy trình minh bạch: lập kế hoạch, tạo góc nhìn, tìm nguồn, đối chiếu bằng chứng và viết báo cáo có trích dẫn.'] },
-        { id: 'architecture', title: '2. Kiến trúc', paragraphs: ['Frontend React cung cấp workspace và thư viện. FastAPI quản lý auth, report và WebSocket. LangGraph điều phối analyst, Gemini tổng hợp, Tavily và Wikipedia cung cấp nguồn.'] },
+        { id: 'architecture', title: '2. Kiến trúc', paragraphs: ['Frontend React cung cấp workspace và thư viện. FastAPI quản lý auth, report và WebSocket. LangGraph điều phối đọc, đánh giá độ bao phủ, viết và kiểm tra; Tavily tìm URL, kho tài liệu dùng chung lưu PDF và nội dung công khai. Model sử dụng theo cấu hình host.'] },
         { id: 'principles', title: '3. Nguyên tắc sản phẩm', paragraphs: ['Nguồn phải gắn với luận điểm, người dùng phải nhìn thấy trạng thái pipeline và host phải kiểm soát quyền truy cập. Chất lượng quan trọng hơn việc tạo văn bản nhanh.'] },
         { id: 'status', title: '4. Trạng thái project', paragraphs: ['Đây là project self-hosted đang phát triển, không phải dịch vụ được chứng nhận hoặc có SLA mặc định. Mỗi host chịu trách nhiệm cấu hình, kiểm thử, chính sách và hỗ trợ người dùng của bản triển khai.'] },
       ],
@@ -361,13 +361,13 @@ const pages: Record<Language, Record<InformationView, InformationDefinition>> = 
     },
     about: {
       eyebrow: 'PRODUCT', title: 'About Nexora',
-      summary: 'An evidence-first research workspace combining multiple AI analysts, source discovery, and structured report editing.',
+      summary: 'An evidence-first workspace for question-driven reading, field-specific paper analysis, and structured reports with provenance.',
       updated: 'Core v0.4.0',
       highlights: ['Evidence-first', 'Multi-agent', 'Self-hosted'],
       related: ['help', 'changelog', 'security'],
       sections: [
         { id: 'mission', title: '1. Mission', paragraphs: ['Nexora turns an open question into a visible process: plan, create perspectives, discover sources, compare evidence, and write a cited report.'] },
-        { id: 'architecture', title: '2. Architecture', paragraphs: ['The React frontend provides the workspace and library. FastAPI handles authentication, reports, and WebSockets. LangGraph coordinates analysts, Gemini synthesizes, and Tavily/Wikipedia supply evidence.'] },
+        { id: 'architecture', title: '2. Architecture', paragraphs: ['The React frontend provides the workspace and library. FastAPI handles authentication, reports, and WebSockets. LangGraph coordinates reading, coverage, writing and checking. Tavily discovers URLs; the shared document store caches PDFs and public content. The model provider is host-configured.'] },
         { id: 'principles', title: '3. Product principles', paragraphs: ['Claims should connect to evidence, users should see pipeline state, and hosts should control access. Research quality matters more than producing text quickly.'] },
         { id: 'status', title: '4. Project status', paragraphs: ['This is an evolving self-hosted project, not a certified service with a default SLA. Each host is responsible for configuration, testing, policies, and user support for its deployment.'] },
       ],

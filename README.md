@@ -63,6 +63,14 @@ Research Notebook mới nằm trên server. Việc lưu trữ không xóa vĩnh 
 
 Chạy local bằng `run-app.ps1` hoặc khởi động backend và Vite riêng; Vite cần
 proxy WebSocket cho đường `/api` (đã cấu hình trong `frontend/vite.config.ts`).
+Trên Windows, launcher kiểm tra đúng thư mục làm việc và loại tiến trình trước
+khi dừng server cũ; xử lý cả worker Python còn giữ socket sau khi reloader cha
+đã thoát và Vite được chạy bằng đường dẫn tương đối. Không dừng ứng dụng khác
+chỉ vì đang giữ cổng. Cài `backend/requirements.txt` để có dependency kiểm tra
+tiến trình. Dùng `./run-app.ps1 -CheckOnly` để kiểm tra mà không dừng server;
+`-NoBrowser` để chạy mà không tự mở trình duyệt. Không chạy hai launcher đồng
+thời; nếu cổng thuộc dự án khác hoặc không xác minh được, launcher sẽ dừng và
+báo lỗi cụ thể. Việc khởi động lại sẽ ngắt các phiên đang chạy trên server cũ.
 Khi triển khai production cần HTTPS/WSS, `AUTH_SESSION_SECRET` mạnh,
 `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS` chính xác, backup định kỳ và quy định
 giữ/xóa dữ liệu của host. Thiết kế hiện tại phù hợp một host SQLite với số
@@ -193,6 +201,30 @@ Trong web app, nhập bất kỳ chủ đề đủ cụ thể, chọn **Nhanh / 
 Chuyên sâu**, chọn số analyst rồi bấm **Bắt đầu nghiên cứu**. Bật **Tự động
 duyệt** để chạy thẳng; tắt nó nếu muốn xem và góp ý cho nhóm analyst/các
 section trước khi hệ thống viết report.
+
+### Deploy frontend lên Cloudflare Workers
+
+Worker `deep-research-agent` hiện phục vụ **frontend tĩnh**; nó không chạy
+FastAPI/Python. Từ thư mục gốc project, chạy `npm ci`, sau đó `npm run build`
+để cài dependencies của frontend và tạo `frontend/dist`. Đăng nhập Wrangler
+một lần bằng `npx wrangler login`, rồi chạy `npm run deploy` để build và deploy
+theo `wrangler.jsonc`.
+
+Backend thử nghiệm đang chạy tại Render và Worker chuyển tiếp `/api/*`,
+`/ws/*`, `/health` qua `BACKEND_ORIGIN` trong `wrangler.jsonc`. Frontend dùng
+cùng domain với API nên không cần `VITE_API_BASE_URL`. Kiểm tra
+`https://deep-research-agent.tranminhkhoi8407.workers.dev/health` trước khi
+thử đăng nhập. `FRONTEND_URL`, `BACKEND_URL` và `CORS_ORIGINS` trên Render đều
+dùng chính xác domain Worker. OAuth callback tương ứng là
+`https://deep-research-agent.tranminhkhoi8407.workers.dev/api/auth/callback/google`
+hoặc `/github`. Không đặt OAuth secret hay API secret có tiền tố `VITE_`: các
+biến `VITE_*` được nhúng vào mã frontend. Hướng dẫn và giới hạn Render Free
+nằm trong [docs/render-deploy.md](docs/render-deploy.md).
+
+Nếu đăng nhập Wrangler qua trình duyệt gặp lỗi CSRF, có thể dùng API token
+Cloudflare được giới hạn quyền Workers Edit trong biến môi trường của terminal
+hiện tại (`CLOUDFLARE_API_TOKEN`, kèm `CLOUDFLARE_ACCOUNT_ID` nếu cần). Không
+commit token vào repository và không gửi token qua chat.
 
 ### Đăng nhập Google / GitHub
 

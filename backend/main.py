@@ -1,11 +1,8 @@
-"""FastAPI backend cho Nexora Agent v4.
+"""Nexora product API: authenticated, evidence-first research and paper analysis.
 
-WebSocket endpoint stream tiến trình real-time:
-- node_complete: mỗi node chạy xong
-- analysts_generated: tại interrupt 1 (human_feedback) — gửi danh sách analyst
-- feedback_requested: yêu cầu user feedback
-- sections_completed: tại interrupt 2 (human_review_section) — gửi các section
-- report_complete: report hoàn tất
+WebSocket streams node progress, a source-linked structured draft for editorial
+review, and the final report with persistent provenance. Legacy interview graphs
+remain separate CLI/Studio entry points.
 """
 
 import asyncio
@@ -25,7 +22,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
 
-from agent.graph import batch_graph, graph
+from agent.deep_research import batch_graph, finalize_report, graph
+from agent.documents import DocumentStore, paper_url
+from agent.research_contract import LanguageConflict, resolve_language, resolve_research_topic
 from backend.schemas import (
     WSClientMessage,
     WSNodeUpdate,
@@ -41,6 +40,8 @@ from backend.schemas import (
 from backend.auth import current_admin, current_user, provider_status, router as auth_router
 from backend.paper_library import router as paper_library_router
 from backend.collaboration import router as collaboration_router
+from backend.research_documents import router as research_documents_router
+from backend.report_export import ExportError, export_report
 from backend.sessions import RememberSessionMiddleware
 from backend.accounts import (
     get_user,
@@ -117,6 +118,14 @@ def _report_summary(path: Path, content: str | None = None) -> dict:
         for match in source_pattern.finditer(text)
     ]
     stat = path.stat()
+    metadata = path.with_suffix(".research.json")
+    if metadata.is_file():
+        try:
+            structured = json.loads(metadata.read_text(encoding="utf-8"))
+            if isinstance(structured, dict):
+                sources = [{key: source.get(key, "") for key in ("id", "title", "url", "source_type", "quality")} for source in structured.get("sources", []) if isinstance(source, dict) and source.get("used")]
+        except (OSError, ValueError, TypeError):
+            pass
     return {
         "id": path.name,
         "title": title,
@@ -188,6 +197,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(paper_library_router)
 app.include_router(collaboration_router)
+app.include_router(research_documents_router)
 
 
 @app.get("/health")
@@ -214,7 +224,32 @@ async def get_saved_report(report_id: str, user: dict = Depends(current_user)):
     if not path.is_file():
         raise HTTPException(404, "Report not found")
     content = path.read_text(encoding="utf-8")
-    return {**_report_summary(path, content), "final_report": content}
+    metadata = path.with_suffix(".research.json")
+    report_data = None
+    if metadata.is_file():
+        try:
+            candidate = json.loads(metadata.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict) and candidate.get("schema_version") in {"2.0", "2.1", "3.0"}:
+                report_data = candidate
+        except (OSError, ValueError):
+            pass  # The original Markdown remains readable if metadata is damaged.
+    return {**_report_summary(path, content), "final_report": content, "report_data": report_data}
+
+
+@app.get("/api/reports/{report_id}/export")
+async def export_saved_report(report_id: str, format: Literal["tex", "pdf", "zip"] = "pdf", user: dict = Depends(current_user)):
+    """Account-scoped artifact export. Existing Markdown is only a legacy input."""
+    path = _safe_report_path(report_id, user["id"])
+    if not path.is_file():
+        raise HTTPException(404, "Report not found")
+    record = await get_saved_report(report_id, user)
+    try:
+        artifact = await asyncio.to_thread(export_report, path, record["report_data"], record["final_report"], format)
+    except ExportError as error:
+        raise HTTPException(503 if error.code in {"compiler_unavailable", "compiler_busy"} else 422,
+                            {"code": error.code, "message": str(error)}) from error
+    return FileResponse(artifact, media_type={"tex": "application/x-tex", "pdf": "application/pdf", "zip": "application/zip"}[format],
+                        filename=path.stem + (".source.zip" if format == "zip" else "." + format), headers={"Cache-Control": "private, no-store"})
 
 
 @app.delete("/api/reports/{report_id}")
@@ -223,6 +258,9 @@ async def delete_saved_report(report_id: str, user: dict = Depends(current_user)
     if not path.is_file():
         raise HTTPException(404, "Report not found")
     path.unlink()
+    path.with_suffix(".research.json").unlink(missing_ok=True)
+    for suffix in (".tex", ".pdf", ".export.json", ".source.zip"):
+        path.with_suffix(suffix).unlink(missing_ok=True)
     return {"status": "deleted", "id": report_id}
 
 
@@ -353,12 +391,43 @@ async def admin_audit(limit: int = 100, _admin: dict = Depends(current_admin)):
     return {"events": list_audit_events(limit)}
 
 
+def _research_options(request, owner: str) -> dict:
+    try:
+        selected = request.report_language or "auto"
+        if request.analysis_mode == "paper" and not (request.topic or "").strip() and selected == "auto":
+            selected = request.preferred_report_language
+        language = resolve_language(request.topic or "", selected)
+        topic = resolve_research_topic(request.topic or "", request.analysis_mode, language)
+        if request.analysis_mode == "paper" and not (request.paper_input.strip() or request.document_id):
+            raise ValueError("Paper analysis needs a URL/DOI/arXiv ID or an uploaded PDF.")
+        if request.paper_input:
+            paper_url(request.paper_input)
+        if request.document_id and not DocumentStore().get(owner, request.document_id):
+            raise ValueError("Selected PDF not found in this account.")
+    except LanguageConflict as error:
+        raise HTTPException(409, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    return {
+        "topic": topic,
+        "owner_id": owner,
+        "report_language": language,
+        "analysis_mode": request.analysis_mode,
+        "paper_input": request.paper_input,
+        "document_id": request.document_id,
+        "report_detail": request.report_detail,
+        "preferred_report_language": request.preferred_report_language,
+        "budget": request.budget.model_dump(exclude_unset=True) if request.budget else None,
+    }
+
+
 @app.post("/api/research", response_model=ResearchResponse)
 async def start_research(request: ResearchRequest, user: dict = Depends(current_user)):
     """REST endpoint để bắt đầu research (non-streaming, trả về session_id).
 
     Client dùng session_id để connect WebSocket hoặc poll kết quả.
     """
+    options = _research_options(request, user["id"])
     session_id = str(uuid.uuid4())
     thread = {"configurable": {"thread_id": session_id, "user_id": user["id"]}}
 
@@ -374,6 +443,7 @@ async def start_research(request: ResearchRequest, user: dict = Depends(current_
         "source_preferences": request.source_preferences,
         "max_analysts": request.max_analysts,
         "human_analyst_feedback": "",
+        **options,
     }
 
     active_sessions[session_id] = {
@@ -381,7 +451,8 @@ async def start_research(request: ResearchRequest, user: dict = Depends(current_
         "initial_state": initial_state,
         "status": "started",
         "created_at": datetime.now(),
-        "topic": request.topic,
+        "topic": options["topic"],
+        "owner_id": user["id"],
     }
 
     # Chạy background task
@@ -390,7 +461,7 @@ async def start_research(request: ResearchRequest, user: dict = Depends(current_
     return ResearchResponse(
         session_id=session_id,
         status="started",
-        message=f"Research started for topic: {request.topic}",
+        message=f"Research started for topic: {options['topic']}",
     )
 
 
@@ -403,7 +474,7 @@ async def get_research_result(session_id: str, user: dict = Depends(current_user
     if session.get("owner_id") != user["id"]:
         raise HTTPException(404, "Session not found")
 
-    if session["status"] != "completed":
+    if session["status"] not in {"completed", "partial", "failed"}:
         return ReportResponse(
             session_id=session_id,
             topic=session["topic"],
@@ -417,24 +488,21 @@ async def get_research_result(session_id: str, user: dict = Depends(current_user
         topic=session["topic"],
         final_report=session.get("final_report", ""),
         created_at=session["created_at"],
-        status="completed",
+        status=session["status"],
+        report_data=session.get("report_data"),
     )
 
 
 @app.get("/api/report/{session_id}")
-async def download_report(session_id: str, user: dict = Depends(current_user)):
-    """Download report as .md file."""
+async def download_report(session_id: str, format: Literal["tex", "pdf", "zip"] = "pdf", user: dict = Depends(current_user)):
+    """Download the actual report PDF or its editable LaTeX source."""
     session = active_sessions.get(session_id)
-    if not session or session["status"] != "completed":
+    if not session or session["status"] not in {"completed", "partial", "failed"}:
         raise HTTPException(404, "Report not ready")
     if session.get("owner_id") != user["id"]:
         raise HTTPException(404, "Report not ready")
 
-    return FileResponse(
-        path=session.get("filepath"),
-        filename=f"report-{session_id[:8]}.md",
-        media_type="text/markdown",
-    )
+    return await export_saved_report(Path(session["filepath"]).name, format, user)
 
 
 async def run_research_background(session_id: str):
@@ -462,14 +530,17 @@ async def run_research_background(session_id: str):
         output_dir = _reports_dir(session.get("owner_id"))
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in session["topic"])[:50].strip()
-        filename = f"{timestamp}-{safe_topic or 'report'}.md".replace(" ", "-")
+        filename = f"{timestamp}-{safe_topic or 'report'}-{session_id[:8]}.md".replace(" ", "-")
         filepath = output_dir / filename
 
         filepath.write_text(result["final_report"], encoding="utf-8")
+        if result.get("report_data"):
+            filepath.with_suffix(".research.json").write_text(json.dumps(result["report_data"], ensure_ascii=False), encoding="utf-8")
 
-        session["status"] = "completed"
+        session["status"] = (result.get("report_data") or {}).get("outcome", "completed")
         session["final_report"] = result["final_report"]
         session["filepath"] = str(filepath)
+        session["report_data"] = result.get("report_data")
 
     except Exception as e:
         session["status"] = "error"
@@ -523,7 +594,7 @@ async def research_websocket(websocket: WebSocket):
             return
 
         topic = (msg.topic or "").strip()
-        if len(topic) < 8:
+        if msg.analysis_mode != "paper" and len(topic) < 8:
             await websocket.send_text(
                 WSError(
                     message="Topic is too short",
@@ -542,7 +613,14 @@ async def research_websocket(websocket: WebSocket):
             )
             return
 
-        session_id = msg.session_id or str(uuid.uuid4())
+        try:
+            options = _research_options(msg, user["id"])
+        except HTTPException as error:
+            await websocket.send_text(WSError(message=str(error.detail)).model_dump_json())
+            return
+        topic = options["topic"]
+        # Never allow a client to reuse another user's checkpoint/session.
+        session_id = str(uuid.uuid4())
         thread = {"configurable": {"thread_id": session_id, "user_id": user["id"]}}
 
         initial_state = {
@@ -556,6 +634,7 @@ async def research_websocket(websocket: WebSocket):
             "source_preferences": msg.source_preferences or [],
             "max_analysts": max_analysts,
             "human_analyst_feedback": "",
+            **options,
         }
 
         active_sessions[session_id] = {
@@ -564,7 +643,7 @@ async def research_websocket(websocket: WebSocket):
             "websocket": websocket,
             "status": "running",
             "created_at": datetime.now(),
-            "topic": msg.topic,
+            "topic": topic,
             "owner_id": user["id"],
         }
 
@@ -646,23 +725,29 @@ async def run_research_stream(session_id: str, initial_state: dict, thread: dict
     output_dir = _reports_dir(session.get("owner_id"))
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_topic = "".join(c if c.isalnum() or c in " -_" else "" for c in initial_state["topic"])[:50].strip()
-    filename = f"{timestamp}-{safe_topic or 'report'}.md".replace(" ", "-")
+    filename = f"{timestamp}-{safe_topic or 'report'}-{session_id[:8]}.md".replace(" ", "-")
     filepath = output_dir / filename
 
     filepath.write_text(final_report, encoding="utf-8")
+    report_data = final_state.values.get("report_data")
+    if report_data:
+        filepath.with_suffix(".research.json").write_text(json.dumps(report_data, ensure_ascii=False), encoding="utf-8")
 
-    session["status"] = "completed"
+    session["status"] = (report_data or {}).get("outcome", "completed")
     session["final_report"] = final_report
     session["filepath"] = str(filepath)
+    session["report_data"] = report_data
 
     # Gửi hoàn tất
     await websocket.send_text(
         WSReportComplete(
             final_report=final_report,
             filepath=str(filepath),
-            source_count=len(unique_source_urls),
+            source_count=report_data["counts"]["used"] if report_data else len(unique_source_urls),
             research_depth=initial_state.get("research_depth", "standard"),
             audit_notes=final_state.values.get("audit_notes"),
+            report_data=report_data,
+            outcome=session["status"],
         ).model_dump_json()
     )
 
@@ -736,13 +821,16 @@ async def _handle_section_review_interrupt(
         section_titles.append(title)
 
     await websocket.send_text(
-        WSSectionList(sections=section_titles).model_dump_json()
+        WSSectionList(
+            sections=section_titles,
+            report_data=finalize_report(graph.get_state(thread).values)["report_data"],
+        ).model_dump_json()
     )
 
     await websocket.send_text(
         WSFEedbackRequest(
             interrupt_type="human_review_section",
-            message=f"Đã hoàn thành {len(sections)} section. Gõ feedback để viết lại, hoặc 'approve' để xuất report.",
+            message=f"Có bản nháp {len(sections)} mục và dẫn chứng. Góp ý được áp dụng trong ngân sách còn lại; 'approve' để xuất báo cáo.",
             options=["approve"],
         ).model_dump_json()
     )
@@ -767,9 +855,9 @@ async def _handle_section_review_interrupt(
             if feedback.lower() != "approve":
                 await websocket.send_text(
                     WSNodeUpdate(
-                        node="write_report",
+                        node="apply_editorial_feedback",
                         timestamp=datetime.now(),
-                        details=f"Rewriting report with feedback: {feedback}",
+                        details="Applying editorial feedback within the remaining research budget.",
                     ).model_dump_json()
                 )
             break
@@ -777,6 +865,20 @@ async def _handle_section_review_interrupt(
 
 def _format_node_details(node_name: str, node_output: dict) -> str:
     """Format chi tiết node cho display."""
+    if node_name == "understand_brief":
+        return f"Report: {node_output.get('report_language', 'auto')} · {node_output.get('brief', {}).get('objective', '')}"
+    if node_name == "collect_evidence":
+        return f"{len(node_output.get('sources', []))} discovered · {len(node_output.get('evidence', []))} excerpts selected · {node_output.get('usage', {}).get('cache_hits', 0)} cache hits"
+    if node_name == "assess_coverage":
+        missing = sum(item.get("status") != "answered" for item in node_output.get("coverage", []))
+        return f"{missing} questions need more evidence · {node_output.get('stop_reason') or 'read/search follow-up'}"
+    if node_name == "draft_report":
+        count = sum(len(section.get("claims", [])) for section in node_output.get("report_data", {}).get("sections", []))
+        return f"{count} source-matched claims drafted · semantic review pending"
+    if node_name == "audit_evidence":
+        claims = [claim for section in node_output.get("report_data", {}).get("sections", []) for claim in section.get("claims", [])]
+        checked = sum(claim.get("verification") == "model_checked" for claim in claims)
+        return f"{checked} claims support-reviewed · {len(claims) - checked} provisional"
     if node_name == "create_analysts":
         analysts = node_output.get("analysts", [])
         return f"Created {len(analysts)} analysts"
@@ -791,7 +893,7 @@ def _format_node_details(node_name: str, node_output: dict) -> str:
     elif node_name == "write_conclusion":
         return "Conclusion written"
     elif node_name == "finalize_report":
-        return "Final report assembled"
+        return f"Report assembled · {node_output.get('report_data', {}).get('outcome', 'status unavailable')}"
     elif node_name == "audit_report":
         return "Evidence and citation audit completed"
     elif node_name == "save_research_profile":

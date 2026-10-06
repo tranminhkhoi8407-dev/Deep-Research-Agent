@@ -1,30 +1,69 @@
-import { lazy, Suspense, useEffect, useRef, useState, type MutableRefObject } from "react";
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import * as Y from "yjs";
-import { BlockNoteEditor, BlockNoteSchema, defaultBlockSpecs, defaultInlineContentSpecs } from "@blocknote/core";
-import { blocksToYDoc, withCollaboration } from "@blocknote/core/yjs";
+import { BlockNoteEditor, BlockNoteSchema, createExtension, defaultBlockSpecs, defaultInlineContentSpecs, defaultProps } from "@blocknote/core";
+import { InputRule, inputRules } from '@handlewithcare/prosemirror-inputrules';
+import { TextSelection } from 'prosemirror-state';
+import { blocksToYDoc, yDocToBlocks, withCollaboration } from "@blocknote/core/yjs";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
-import { useCreateBlockNote, getDefaultReactSlashMenuItems, SuggestionMenuController } from "@blocknote/react";
+import { createReactBlockSpec, useCreateBlockNote, getDefaultReactSlashMenuItems, SuggestionMenuController, SideMenuController, SideMenu, FormattingToolbarController, FormattingToolbar, blockTypeSelectItems } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
-import { createReactInlineMathSpec, createReactMathBlockSpec, getMathSlashMenuItems } from "@blocknote/math-block";
-import { Wifi, WifiOff, GripVertical, Sigma } from "lucide-react";
+import { createReactInlineMathSpec, createReactMathBlockSpec, getMathSlashMenuItems, getMathBlockTypeSelectItems } from "@blocknote/math-block";
+import { FilePlus2, Plus } from "lucide-react";
+import { equationSource, freshBlockCopy, inlineEquationInput, inlineEquationParts, mathMarkdownProjection } from './notebookMath';
+import { NotebookBlockMenu } from './NotebookBlockMenu';
+import { NotebookPageIcon, type NotebookPageInfo, type NotebookPageAction } from './NotebookPageIcon';
 import type { Language } from "./ProductViews";
-import type { Person } from "./CollaborationHub";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
+import './NotebookEditor.css';
 
 const LegacyMarkdownEditor = lazy(() => import("./LegacyMarkdownEditor"));
+const PageLinks = createContext<{ onOpen?: (id: string) => void; onCreateUnder?: (id: string) => void; href?: (id: string) => string; language: Language; pages?: NotebookPageInfo[] }>({ language: 'en' });
+const pageLinkSpec = createReactBlockSpec({ type: 'pageLink', propSchema: { pageId: { default: '' }, title: { default: '' }, textColor: defaultProps.textColor, backgroundColor: defaultProps.backgroundColor }, content: 'none' }, {
+  render: ({ block }) => {
+    const context = useContext(PageLinks), id = block.props.pageId;
+    const page = context.pages?.find(page => page.id === id);
+    const title = page?.title || block.props.title || 'Untitled';
+    if (!/^[a-f0-9]{32}$/.test(id)) return <span>{title}</span>;
+    return <div className={`notebook-page-reference ${block.props.backgroundColor !== 'default' ? 'has-custom-color' : ''} ${block.props.textColor !== 'default' ? 'has-custom-text-color' : ''}`} contentEditable={false}>
+      <a href={context.href?.(id) || `#/collab/page/${id}`} onClick={event => { if (context.onOpen && !event.ctrlKey && !event.metaKey && !event.shiftKey && event.button === 0) { event.preventDefault(); context.onOpen(id); } }}><NotebookPageIcon icon={page?.icon} /><span>{title}</span></a>
+      {context.onCreateUnder && context.pages?.some(page => page.id === id) && <button type="button" aria-label={context.language === 'vi' ? `Tạo trang con trong ${title}` : `Create a subpage in ${title}`} title={context.language === 'vi' ? 'Tạo trang con' : 'Create subpage'} onClick={event => { event.stopPropagation(); context.onCreateUnder?.(id); }}><Plus size={17} /></button>}
+    </div>;
+  },
+  toExternalHTML: ({ block }) => <a href={`#/collab/page/${block.props.pageId}`}>{block.props.title}</a>,
+})();
 
 // Media uploads are deliberately excluded: inserting a file must not publish it.
 const { audio: _audio, video: _video, image: _image, file: _file, ...textBlocks } = defaultBlockSpecs;
+const notionMathInput = createExtension({
+  key: 'notebook-inline-equation',
+  prosemirrorPlugins: [inputRules({ rules: [new InputRule(inlineEquationInput, (state, match, start, end) => {
+    if (state.selection.$from.parent.type.spec.code || !match[1]?.trim()) return null;
+    const node = state.schema.nodes.math.create(null, state.schema.text(match[1].trim()));
+    const tr = state.tr.replaceRangeWith(start, end, node);
+    return tr.setSelection(TextSelection.create(tr.doc, start + node.nodeSize));
+  })] })],
+});
 const schema = BlockNoteSchema.create({
-  blockSpecs: { ...textBlocks, mathBlock: createReactMathBlockSpec() },
-  inlineContentSpecs: { ...defaultInlineContentSpecs, math: createReactInlineMathSpec() },
+  // Disable the package's single-$ and $$-space shortcuts: they fire before
+  // Notion's closing $$ and can turn a partially typed inline formula into a block.
+  // BlockNote 0.55 registers spec extensions through blockSpecs only.
+  blockSpecs: { ...textBlocks, pageLink: pageLinkSpec, mathBlock: { ...createReactMathBlockSpec(), extensions: [notionMathInput] } },
+  inlineContentSpecs: { ...defaultInlineContentSpecs, math: { ...createReactInlineMathSpec(), extensions: [] } },
 });
 export type NotebookBlock = typeof schema.Block;
 function parseNotebookMarkdown(editor: BlockNoteEditor<typeof schema.blockSchema, typeof schema.inlineContentSchema, typeof schema.styleSchema>, source: string) {
   const blocks: ReturnType<typeof editor.tryParseMarkdownToBlocks> = [];
   let chunk: string[] = [], formula: string[] | null = null, fence = "";
-  const flush = () => { if (chunk.length) blocks.push(...editor.tryParseMarkdownToBlocks(chunk.join("\n"))); chunk = []; };
+  const convertInline = (block: NotebookBlock): NotebookBlock => {
+    if (block.type !== 'codeBlock' && block.type !== 'mathBlock' && Array.isArray(block.content)) {
+      block.content = block.content.flatMap(item => item.type === 'text' && !item.styles.code
+        ? inlineEquationParts(item.text).map(part => part.type === 'text' ? { ...item, text: part.text } : { type: 'math' as const, props: {}, content: part.content }) : [item]) as typeof block.content;
+    }
+    block.children = block.children.map(convertInline);
+    return block;
+  };
+  const flush = () => { if (chunk.length) blocks.push(...editor.tryParseMarkdownToBlocks(chunk.join("\n")).map(convertInline)); chunk = []; };
   for (const line of source.split("\n")) {
     const trimmed = line.trim();
     if (!formula && /^(```|~~~)/.test(trimmed)) { const marker = trimmed.slice(0, 3); fence = fence ? (fence === marker ? "" : fence) : marker; }
@@ -39,11 +78,19 @@ function parseNotebookMarkdown(editor: BlockNoteEditor<typeof schema.blockSchema
   return blocks;
 }
 export type NotebookOperation = { id: number; mode: "append" | "replace"; content: string; blocks?: NotebookBlock[] };
+export type SubpageConversion = { title: string; update: string };
 type DocumentResponse = { format: string; revision: number; update: string; legacy_markdown: string };
 type Props = {
   apiBase: string; pageId: string; userId: string; username?: string; canEdit: boolean; language: Language;
   onReady: (markdown: string) => void; onSync: (synced: boolean) => void;
   onBlocks?: (blocks: NotebookBlock[]) => void; operation: NotebookOperation | null;
+  onCreateSubpage?: () => void;
+  onCreateSubpageUnder?: (pageId: string) => void;
+  onConvertToPage?: (payload: SubpageConversion) => Promise<{ id: string; title: string }>;
+  onOpenPage?: (id: string) => void; pages?: NotebookPageInfo[];
+  pageHref?: (id: string) => string;
+  onPageAction?: (id: string, action: NotebookPageAction) => void;
+  onPageTreeChanged?: () => void;
 };
 function encode(bytes: Uint8Array) {
   let result = "";
@@ -91,6 +138,7 @@ export default function LiveResearchEditor(props: Props) {
   useEffect(() => { if (state?.format === "markdown" && !state.legacy_markdown && props.canEdit && !converting) void convert(state); }, [state]);
   if (error && !state) return <p role="alert" className="collab-inline-error">{error}<button onClick={() => void load()}>Retry</button></p>;
   if (!state) return <p role="status">{props.language === "vi" ? "Đang tải notebook…" : "Loading notebook…"}</p>;
+  if (state.format !== 'blocks' && !state.legacy_markdown && props.canEdit) return <div role="status">{error ? <><p role="alert">{error}</p><button disabled={converting} onClick={() => void convert(state)}>Retry</button></> : props.language === 'vi' ? 'Đang chuẩn bị trang viết…' : 'Preparing your page…'}</div>;
   if (state.format !== "blocks") return <>
     <div className="notebook-upgrade">
       <strong>{props.language === "vi" ? "Nâng cấp trang Markdown sang editor dạng khối" : "Upgrade this Markdown page to the block editor"}</strong>
@@ -109,7 +157,6 @@ function BlockNotebook({ initial, ...props }: Props & { initial: DocumentRespons
   const [writable, setWritable] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [presence, setPresence] = useState<Person[]>([]);
   const revision = useRef(initial.revision);
   const latest = useRef(props); latest.current = props;
   const syncedRef = useRef(false);
@@ -166,7 +213,7 @@ function BlockNotebook({ initial, ...props }: Props & { initial: DocumentRespons
           }
           if (message.type === "permission") { allowed = latest.current.canEdit && message.access >= 3; setWritable(allowed); if (!allowed) setError("Editing access was revoked. You can still read and export."); }
           if (message.type === "ack") { pending.delete(message.id); acknowledgedRevision = Math.max(acknowledgedRevision, message.revision || 0); syncStatus(); }
-          if (message.type === "presence") setPresence(message.people || []);
+          if (message.type === "tree") latest.current.onPageTreeChanged?.();
           if (message.type === "error") setError(message.message || "Update rejected");
         } catch { setError("Could not read the live update. Reload if the problem persists."); }
       };
@@ -189,11 +236,7 @@ function BlockNotebook({ initial, ...props }: Props & { initial: DocumentRespons
     };
   }, [doc, props.apiBase, props.pageId, props.userId]);
   return <div className="collab-editor notebook-block-editor">
-    <div className="collab-editor__status" role="status">
-      <span className={ready && !error ? "is-live" : ""}>{ready && !error ? <Wifi size={15} /> : <WifiOff size={15} />}{error ? (props.language === "vi" ? "Chưa đồng bộ" : "Not synced") : saving ? (props.language === "vi" ? "Đang lưu…" : "Saving…") : ready ? (props.language === "vi" ? "Đã đồng bộ" : "All changes synced") : "Connecting…"}</span>
-      <span>{presence.length} {props.language === "vi" ? "người đang xem" : "viewing"}</span>
-      {presence.map(person => <span className="collab-editor__presence" key={person.id} title={person.public_name || person.display_name}>{person.display_name.slice(0, 1)}</span>)}
-    </div>
+    <span className="notebook-sr-only" role="status">{saving ? (props.language === 'vi' ? 'Đang lưu…' : 'Saving…') : ''}</span>
     {error && <p className="collab-inline-error" role="alert">{error}</p>}
     {ready ? <RichCanvas {...props} doc={doc} writable={writable} revision={revision} synced={syncedRef} exportRef={exportRef} /> : <p className="collab-muted">{props.language === "vi" ? "Đang đồng bộ các khối…" : "Syncing blocks…"}</p>}
   </div>;
@@ -208,7 +251,68 @@ function RichCanvas({ doc, writable, revision, synced, exportRef, ...props }: Pr
   const indexTimer = useRef<ReturnType<typeof setTimeout>>();
   const exportCounter = useRef(0);
   const editor = useCreateBlockNote(withCollaboration({ schema, domAttributes: { editor: { "aria-label": "Research notebook content" } }, collaboration: { fragment: doc.getXmlFragment("notebook"), user: { name: props.username || "Researcher", color: "#476cf1" } } }), [doc]);
+  const [conversionError, setConversionError] = useState('');
+  const convertingBlocks = useRef(new Set<string>());
+  const convertToPage = async (blockId: string) => {
+    const source = editor.getBlock(blockId), create = latest.current.onConvertToPage;
+    if (!create || !source || !editor.isEditable || convertingBlocks.current.has(blockId)) return;
+    convertingBlocks.current.add(blockId); setConversionError('');
+    const original = JSON.stringify(source);
+    const title = equationSource(source.content as never).trim().slice(0, 120) || (latest.current.language === 'vi' ? 'Trang không tiêu đề' : 'Untitled page');
+    const seed = blocksToYDoc(editor, [freshBlockCopy(source)], 'notebook');
+    try {
+      const page = await create({ title, update: encode(Y.encodeStateAsUpdate(seed)) });
+      // Preserve concurrent typing. Only replace the source after the child is saved.
+      const current = editor.getBlock(blockId);
+      if (editor.isEditable && current && JSON.stringify(current) === original) editor.updateBlock(current, { type: 'pageLink', props: { pageId: page.id, title: page.title }, children: [] });
+      else {
+        if (editor.isEditable) editor.insertBlocks([{ type: 'pageLink', props: { pageId: page.id, title: page.title } }], editor.document[editor.document.length - 1], 'after');
+        setConversionError(latest.current.language === 'vi' ? 'Đã tạo trang con. Khối gốc có thay đổi mới nên được giữ nguyên.' : 'Subpage created. The original block had newer changes and was preserved.');
+      }
+    } catch (reason) { setConversionError(`${latest.current.language === 'vi' ? 'Chưa chuyển được khối; nội dung gốc vẫn giữ nguyên.' : 'Conversion failed; the original content is preserved.'} ${String(reason)}`); }
+    finally { seed.destroy(); convertingBlocks.current.delete(blockId); }
+  };
+  const conversionRef = useRef(convertToPage); conversionRef.current = convertToPage;
+  const expandPage = async (blockId: string, type: string, blockProps?: Record<string, boolean | number | string>) => {
+    const block = editor.getBlock(blockId);
+    if (!editor.isEditable || !block || block.type !== 'pageLink' || convertingBlocks.current.has(blockId)) return;
+    convertingBlocks.current.add(blockId); setConversionError('');
+    const original = JSON.stringify(block);
+    try {
+      const target = latest.current.pages?.find(item => item.id === block.props.pageId);
+      const title = target?.title || block.props.title;
+      let contents: NotebookBlock[] = [];
+      if (latest.current.onPageAction && target?.parent_id === latest.current.pageId) {
+        const saved = await documentRequest<DocumentResponse>(latest.current.apiBase, `/pages/${target.id}/document`);
+        const seed = new Y.Doc();
+        try { Y.applyUpdate(seed, decode(saved.update)); contents = saved.format === 'blocks' ? yDocToBlocks(editor, seed, 'notebook') : parseNotebookMarkdown(editor, saved.legacy_markdown); }
+        finally { seed.destroy(); }
+      }
+      if (!editor.isEditable || JSON.stringify(editor.getBlock(blockId)) !== original) throw Error(latest.current.language === 'vi' ? 'Khối vừa thay đổi. Vui lòng thử lại.' : 'The block changed. Please try again.');
+      editor.replaceBlocks([block], [{ id: crypto.randomUUID(), type: type as 'paragraph', props: blockProps, content: type === 'mathBlock' || type === 'codeBlock' ? title : [{ type: 'text', text: title, styles: {} }], children: [] } as Parameters<typeof editor.replaceBlocks>[1][number], ...contents.map(freshBlockCopy)]);
+    } catch (reason) { setConversionError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { convertingBlocks.current.delete(blockId); }
+  };
+  const expandRef = useRef(expandPage); expandRef.current = expandPage;
+  const BlockSideMenu = useMemo(() => {
+    // Keep the menu component identity stable while the hover target changes.
+    // A new component would unmount open submenus on SideMenu updates.
+    const BlockActions = () => <NotebookBlockMenu language={props.language} apiBase={props.apiBase} pageId={props.pageId} onConvertToPage={props.onConvertToPage ? id => void conversionRef.current(id) : undefined} pageContext={() => ({ pages: latest.current.pages, href: latest.current.pageHref, act: latest.current.onPageAction })} onTurnPageInto={(id, type, values) => void expandRef.current(id, type, values)} />;
+    return () => <SideMenu dragHandleMenu={BlockActions} />;
+  }, [props.language, props.apiBase, props.pageId, !!props.onConvertToPage]);
+  const BlockFormattingToolbar = useMemo(() => () => <FormattingToolbar blockTypeSelectItems={[...blockTypeSelectItems(editor.dictionary), ...getMathBlockTypeSelectItems(editor)]} />, [editor]);
   useEffect(() => { editor.isEditable = writable; }, [editor, writable]);
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('block');
+    if (!id || !editor.getBlock(id)) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(`[data-id="${CSS.escape(id)}"]`);
+      target?.scrollIntoView({ block: 'center', behavior: 'auto' });
+      target?.classList.add('notebook-block-linked');
+    });
+    const timer = setTimeout(() => document.querySelector(`[data-id="${CSS.escape(id)}"]`)?.classList.remove('notebook-block-linked'), 2200);
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, [editor]);
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light"));
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); return () => observer.disconnect();
@@ -216,7 +320,8 @@ function RichCanvas({ doc, writable, revision, synced, exportRef, ...props }: Pr
   const publish = async () => {
     const generation = ++exportCounter.current;
     const blocks = editor.document;
-    const markdown = await editor.blocksToMarkdownLossy(blocks);
+    const projection = mathMarkdownProjection(blocks, crypto.randomUUID());
+    const markdown = projection.restore(await editor.blocksToMarkdownLossy(projection.blocks));
     if (generation !== exportCounter.current) return;
     latest.current.onReady(markdown); latest.current.onBlocks?.(blocks);
     clearTimeout(indexTimer.current);
@@ -241,10 +346,15 @@ function RichCanvas({ doc, writable, revision, synced, exportRef, ...props }: Pr
     return () => { cancelled = true; };
   }, [editor, props.operation, writable]);
   return <>
-    <div className="notebook-writing-hint"><GripVertical size={15} /><span>{props.language === "vi" ? "Gõ / để thêm khối · kéo ⋮⋮ để sắp xếp · chọn chữ để định dạng" : "Type / to add blocks · drag ⋮⋮ to reorder · select text to format"}</span></div>
-    {writable && <div className="notebook-tools"><button type="button" onClick={() => getMathSlashMenuItems(editor)[0]?.onItemClick()}><Sigma size={15} />LaTeX</button><button type="button" onClick={() => editor.insertBlocks([{ type: "table", content: { type: "tableContent", rows: [{ cells: ["Metric", "Result", "Evidence"] }, { cells: ["", "", ""] }] } }], editor.getTextCursorPosition().block, "after")}>{props.language === "vi" ? "Bảng dữ liệu" : "Data table"}</button></div>}
-    <BlockNoteView editor={editor} editable={writable} theme={theme} slashMenu={false} onChange={() => void publish()}>
-      <SuggestionMenuController triggerCharacter="/" getItems={async query => filterSuggestionItems([...getDefaultReactSlashMenuItems(editor), ...getMathSlashMenuItems(editor)], query)} />
+    {conversionError && <p role="alert" className="collab-inline-error">{conversionError}</p>}
+    <PageLinks.Provider value={{ onOpen: props.onOpenPage, onCreateUnder: props.canEdit ? props.onCreateSubpageUnder : undefined, href: props.pageHref, language: props.language, pages: props.pages }}>
+    <BlockNoteView editor={editor} editable={writable} theme={theme} slashMenu={false} sideMenu={false} formattingToolbar={false} onChange={() => void publish()}>
+      <SideMenuController sideMenu={BlockSideMenu} />
+      <FormattingToolbarController formattingToolbar={BlockFormattingToolbar} />
+      <SuggestionMenuController triggerCharacter="/" getItems={async query => filterSuggestionItems([
+        ...(props.onCreateSubpage ? [{ title: props.language === 'vi' ? 'Trang con' : 'Subpage', subtext: props.language === 'vi' ? 'Tạo tài liệu bên trong trang này' : 'Create a page inside this page', aliases: ['page', 'subpage', 'trang', 'notebook'], group: 'Notebook', icon: <FilePlus2 size={18} />, onItemClick: props.onCreateSubpage }] : []),
+        ...getDefaultReactSlashMenuItems(editor), ...getMathSlashMenuItems(editor).map((item, index) => ({ ...item, title: index === 0 ? 'Block equation' : (props.language === 'vi' ? 'Công thức trong dòng' : 'Inline equation'), aliases: [...(item.aliases || []), 'math', 'equation', 'latex', 'cong thuc'] }))], query)} />
     </BlockNoteView>
+    </PageLinks.Provider>
   </>;
 }

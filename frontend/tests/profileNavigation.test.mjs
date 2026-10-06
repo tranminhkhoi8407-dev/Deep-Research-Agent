@@ -10,7 +10,7 @@ const { profileCompletionFromHash, profileSetupHash } = await import(`data:text/
 
 test('profile setup preserves field and notebook deep links across reloads', () => {
   for (const field of [null, 'mathematics', 'physics', 'chemistry', 'biology', 'artificial-intelligence']) {
-    for (const returnHash of ['#/collab', `#/collab/page/${'a'.repeat(32)}`, `#/collab/project/${'b'.repeat(32)}`]) {
+    for (const returnHash of ['#/collab', `#/collab/page/${'a'.repeat(32)}`, `#/collab/project/${'b'.repeat(32)}`, '#/fields', ...(field ? [`#/fields/${field}`, `#/fields/${field}/page/${'a'.repeat(32)}`] : [])]) {
       const request = { returnHash, field };
       assert.deepEqual(profileCompletionFromHash(profileSetupHash(request)), request);
     }

@@ -31,6 +31,7 @@ import type { Language } from './ProductViews';
 export type ResearchDomainId = 'mathematics' | 'physics' | 'chemistry' | 'biology' | 'artificial-intelligence';
 
 export interface DomainResearchPayload {
+  analysisMode?: 'paper';
   topic: string;
   domain: ResearchDomainId;
   domainLabel: string;
@@ -78,7 +79,7 @@ interface DomainDefinition {
   latexPresets: { label: string; value: string }[];
 }
 
-const domains: DomainDefinition[] = [
+export const domains: DomainDefinition[] = [
   {
     id: 'mathematics', icon: Sigma, shortCode: 'MATH',
     vi: {

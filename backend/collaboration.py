@@ -17,14 +17,14 @@ import sqlite3
 import time
 import threading
 import uuid
-from collections import deque
+from collections import deque, OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from pycrdt import Doc, Text, XmlFragment
+from pycrdt import Doc, Text, XmlFragment, XmlElement
 
 from backend.accounts import _connect, _database_path, get_user
 from backend.auth import current_user as authenticated_user, collaboration_user as current_user
@@ -37,6 +37,8 @@ GROUP_ROLES = {"owner": 4, "admin": 3, "member": 2}
 ACCESS = {"viewer": 1, "commenter": 2, "editor": 3, "manager": 4}
 _SCHEMA_READY: set[str] = set()
 _SCHEMA_LOCK = threading.RLock()
+_BLOCK_ACTIVITY_CACHE: OrderedDict[tuple, tuple[str, str]] = OrderedDict()
+_BLOCK_ACTIVITY_LOCK = threading.RLock()
 
 
 def now() -> str:
@@ -171,7 +173,10 @@ def _open_database_unlocked() -> sqlite3.Connection:
         conn.execute("ALTER TABLE users ADD COLUMN public_name_key TEXT")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_name_key ON users(public_name_key)")
     page_columns = {row["name"] for row in conn.execute("PRAGMA table_info(research_pages)")}
-    for column, declaration in (("position", "INTEGER NOT NULL DEFAULT 0"), ("editor_format", "TEXT NOT NULL DEFAULT 'markdown'")):
+    for column, declaration in (("position", "INTEGER NOT NULL DEFAULT 0"), ("editor_format", "TEXT NOT NULL DEFAULT 'markdown'"),
+                                ("icon", "TEXT NOT NULL DEFAULT ''"), ("cover", "TEXT NOT NULL DEFAULT 'none'"),
+                                ("full_width", "INTEGER NOT NULL DEFAULT 0"), ("archive_batch", "TEXT"),
+                                ("field_links_ready", "INTEGER NOT NULL DEFAULT 0")):
         if column not in page_columns:
             conn.execute(f"ALTER TABLE research_pages ADD COLUMN {column} {declaration}")
     version_columns = {row["name"] for row in conn.execute("PRAGMA table_info(page_versions)")}
@@ -183,7 +188,42 @@ def _open_database_unlocked() -> sqlite3.Connection:
             revision INTEGER NOT NULL, markdown TEXT NOT NULL, blocks_json TEXT NOT NULL,
             indexed_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS field_workspaces (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            field TEXT NOT NULL,
+            project_id TEXT NOT NULL UNIQUE REFERENCES research_projects(id) ON DELETE CASCADE,
+            home_page_id TEXT NOT NULL UNIQUE REFERENCES research_pages(id),
+            PRIMARY KEY(user_id,field)
+        );
+        CREATE TABLE IF NOT EXISTS notebook_preferences (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            page_id TEXT NOT NULL REFERENCES research_pages(id) ON DELETE CASCADE,
+            favorite INTEGER NOT NULL DEFAULT 0, opened_at TEXT,
+            PRIMARY KEY(user_id,page_id)
+        );
+        CREATE TABLE IF NOT EXISTS page_link_trash (
+            page_id TEXT PRIMARY KEY REFERENCES research_pages(id) ON DELETE CASCADE,
+            parent_id TEXT NOT NULL REFERENCES research_pages(id),
+            block_ids TEXT NOT NULL, archive_batch TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS page_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            page_id TEXT NOT NULL REFERENCES research_pages(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            viewed_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_page_views_page_time ON page_views(page_id,viewed_at);
+        CREATE INDEX IF NOT EXISTS idx_page_views_user_time ON page_views(page_id,user_id,viewed_at);
+        CREATE TABLE IF NOT EXISTS page_view_preferences (
+            page_id TEXT NOT NULL REFERENCES research_pages(id) ON DELETE CASCADE,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            show_history INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(page_id,user_id)
+        );
     """)
+    event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(collaboration_events)")}
+    if "details_json" not in event_columns:
+        conn.execute("ALTER TABLE collaboration_events ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'")
     _SCHEMA_READY.add(database_key)
     return conn
 
@@ -302,8 +342,8 @@ def page_detail(conn: sqlite3.Connection, page_id: str, user_id: str, minimum: i
     return page
 
 
-def event(conn: sqlite3.Connection, project_id: str, actor: str, action: str, subject: str | None = None) -> None:
-    conn.execute("INSERT INTO collaboration_events (project_id,actor_id,action,subject_id,created_at) VALUES (?,?,?,?,?)", (project_id, actor, action, subject, now()))
+def event(conn: sqlite3.Connection, project_id: str, actor: str, action: str, subject: str | None = None, details: dict | None = None) -> None:
+    conn.execute("INSERT INTO collaboration_events (project_id,actor_id,action,subject_id,created_at,details_json) VALUES (?,?,?,?,?,?)", (project_id, actor, action, subject, now(), json.dumps(details or {}, ensure_ascii=False)))
 
 
 class PublicNameInput(BaseModel):
@@ -337,11 +377,25 @@ class ProjectPatch(BaseModel):
 class PageInput(BaseModel):
     title: str = Field(min_length=1, max_length=120)
     parent_id: str | None = None
+    # Turn-into-Page replaces its existing block rather than appending a second link.
+    link_in_parent: bool = True
 
 
 class PagePatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=120)
     parent_id: str | None = None
+    icon: str | None = Field(default=None, max_length=16)
+    cover: Literal["none", "indigo", "ocean", "amber", "forest", "aurora"] | None = None
+    full_width: bool | None = None
+
+
+class NotebookPreference(BaseModel):
+    favorite: bool | None = None
+    opened: bool = False
+
+
+class FieldWorkspaceInput(BaseModel):
+    language: Literal["vi", "en"] = "en"
 
 
 class PageOrderInput(BaseModel):
@@ -714,6 +768,50 @@ def list_projects(field: str | None = None, user: dict = Depends(current_user)):
         return {"projects": [project_payload(conn, row, user["id"]) for row in rows if project_access(conn, row, user["id"]) > 0]}
 
 
+@router.put("/field-workspaces/{field}")
+def open_field_workspace(field: str, payload: FieldWorkspaceInput, user: dict = Depends(current_user)):
+    """Idempotent personal notebook. Never adopt or expose an existing shared project."""
+    labels = {
+        "mathematics": ("Toán học", "Mathematics", "∑", "indigo"),
+        "physics": ("Vật lý", "Physics", "⚛", "ocean"),
+        "chemistry": ("Hóa học", "Chemistry", "⚗", "amber"),
+        "biology": ("Sinh học", "Biology", "🧬", "forest"),
+        "artificial-intelligence": ("Trí tuệ nhân tạo", "Artificial intelligence", "✦", "aurora"),
+    }
+    if field not in labels:
+        raise HTTPException(422, "Unknown research field")
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute("SELECT * FROM field_workspaces WHERE user_id = ? AND field = ?", (user["id"], field)).fetchone()
+        if not existing:
+            project_id, page_id, timestamp = ident(), ident(), now()
+            label = labels[field][0 if payload.language == "vi" else 1]
+            conn.execute("INSERT INTO research_projects VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (project_id, None, user["id"], label, "Personal field notebook", field, "", "active", "restricted", timestamp, timestamp))
+            conn.execute("INSERT INTO research_pages (id,project_id,title,created_by,updated_by,created_at,updated_at,icon,cover) VALUES (?,?,?,?,?,?,?,?,?)",
+                         (page_id, project_id, label, user["id"], user["id"], timestamp, timestamp, labels[field][2], labels[field][3]))
+            conn.execute("INSERT INTO field_workspaces VALUES (?,?,?,?)", (user["id"], field, project_id, page_id))
+            event(conn, project_id, user["id"], "field.workspace_created", page_id)
+            existing = conn.execute("SELECT * FROM field_workspaces WHERE user_id = ? AND field = ?", (user["id"], field)).fetchone()
+        project_id = existing["project_id"]
+        pages = conn.execute("SELECT p.*,COALESCE(n.favorite,0) favorite,n.opened_at FROM research_pages p LEFT JOIN notebook_preferences n ON n.page_id=p.id AND n.user_id=? WHERE p.project_id=? ORDER BY p.position,p.created_at,p.id", (user["id"], project_id)).fetchall()
+        return {"project_id": project_id, "home_page_id": existing["home_page_id"], "field": field,
+                "pages": [dict(page) for page in pages if not page["archived_at"]],
+                "archived_pages": [dict(page) for page in pages if page["archived_at"]]}
+
+
+@router.put("/pages/{page_id}/preference")
+def notebook_preference(page_id: str, payload: NotebookPreference, user: dict = Depends(current_user)):
+    with db() as conn:
+        page_detail(conn, page_id, user["id"])
+        conn.execute("INSERT OR IGNORE INTO notebook_preferences (user_id,page_id) VALUES (?,?)", (user["id"], page_id))
+        if payload.favorite is not None:
+            conn.execute("UPDATE notebook_preferences SET favorite=? WHERE user_id=? AND page_id=?", (payload.favorite, user["id"], page_id))
+        if payload.opened:
+            conn.execute("UPDATE notebook_preferences SET opened_at=? WHERE user_id=? AND page_id=?", (now(), user["id"], page_id))
+    return {"status": "updated"}
+
+
 @router.post("/projects", status_code=201)
 def create_project(payload: ProjectInput, group_id: str | None = None, user: dict = Depends(current_user)):
     if payload.field not in FIELDS:
@@ -759,6 +857,8 @@ def edit_project(project_id: str, payload: ProjectPatch, user: dict = Depends(cu
     with db() as conn:
         project = project_detail(conn, project_id, user["id"], 4)
         updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+        if updates.get("status") == "archived" and conn.execute("SELECT 1 FROM field_workspaces WHERE project_id=?", (project_id,)).fetchone():
+            raise HTTPException(409, "The personal field workspace cannot be archived; archive individual pages instead")
         if updates:
             fields = ", ".join(f"{key} = ?" for key in updates)
             conn.execute(f"UPDATE research_projects SET {fields}, updated_at = ? WHERE id = ?", (*[value.strip() if isinstance(value, str) else value for value in updates.values()], now(), project_id))
@@ -804,7 +904,10 @@ def edit_project_member(project_id: str, member_id: str, payload: RoleInput, use
 def create_page(project_id: str, payload: PageInput, user: dict = Depends(current_user)):
     page_id, timestamp = ident(), now()
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         project_detail(conn, project_id, user["id"], 3)
+        if not payload.title.strip():
+            raise HTTPException(422, "Page title cannot be empty")
         if payload.parent_id:
             parent = page_detail(conn, payload.parent_id, user["id"], 3)
             if parent["project_id"] != project_id:
@@ -812,6 +915,8 @@ def create_page(project_id: str, payload: PageInput, user: dict = Depends(curren
         position = conn.execute("SELECT COALESCE(MAX(position),-1)+1 FROM research_pages WHERE project_id = ? AND parent_id IS ?", (project_id, payload.parent_id)).fetchone()[0]
         conn.execute("INSERT INTO research_pages (id,project_id,parent_id,title,created_by,updated_by,created_at,updated_at,position) VALUES (?,?,?,?,?,?,?,?,?)", (page_id, project_id, payload.parent_id, payload.title.strip(), user["id"], user["id"], timestamp, timestamp, position))
         conn.execute("UPDATE research_projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
+        if payload.parent_id and payload.link_in_parent:
+            add_field_child_link(conn, payload.parent_id, page_id, user["id"])
         event(conn, project_id, user["id"], "page.created", page_id)
         return {"page": dict(conn.execute("SELECT * FROM research_pages WHERE id = ?", (page_id,)).fetchone())}
 
@@ -842,11 +947,220 @@ def document_state(conn: sqlite3.Connection, page_id: str) -> tuple[Doc, int]:
     return document, revision
 
 
+def is_field_project(conn: sqlite3.Connection, project_id: str) -> bool:
+    return bool(conn.execute("SELECT 1 FROM field_workspaces WHERE project_id=?", (project_id,)).fetchone())
+
+
+def page_link_blocks(document: Doc) -> dict[str, set[str]]:
+    """Read actual CRDT Page blocks, never the untrusted Markdown/index cache."""
+    links: dict[str, set[str]] = {}
+    pending = list(document["notebook"].children)
+    while pending:
+        element = pending.pop()
+        if not isinstance(element, XmlElement):
+            continue
+        if element.tag == "blockContainer":
+            for child in element.children:
+                if isinstance(child, XmlElement) and child.tag == "pageLink":
+                    target = child.attributes.get("pageId") or ""
+                    block_id = element.attributes.get("id") or ""
+                    if re.fullmatch(r"[a-f0-9]{32}", target) and block_id:
+                        links.setdefault(target, set()).add(block_id)
+        pending.extend(element.children)
+    return links
+
+
+def append_page_link(document: Doc, child: sqlite3.Row) -> None:
+    fragment = document["notebook"]
+    group = next((node for node in fragment.children if isinstance(node, XmlElement) and node.tag == "blockGroup"), None)
+    if group is None:
+        group = fragment.children.append(XmlElement("blockGroup"))
+    group.children.append(XmlElement("blockContainer", attributes={"id": ident()}, contents=[
+        XmlElement("pageLink", attributes={"pageId": child["id"], "title": child["title"],
+                                          "textColor": "default", "backgroundColor": "default"})
+    ]))
+
+
+def persist_document_delta(conn: sqlite3.Connection, page_id: str, document: Doc, state: bytes, actor: str) -> None:
+    update = document.get_update(state)
+    if update != b"\x00\x00":
+        conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)",
+                     (page_id, actor, update, now()))
+        conn.execute("UPDATE research_pages SET updated_by=?,updated_at=? WHERE id=?", (actor, now(), page_id))
+        conn.execute("DELETE FROM page_projections WHERE page_id=?", (page_id,))
+
+
+def add_field_child_link(conn: sqlite3.Connection, parent_id: str, child_id: str, actor: str) -> None:
+    parent = conn.execute("SELECT * FROM research_pages WHERE id=?", (parent_id,)).fetchone()
+    if not parent or parent["editor_format"] != "blocks" or not is_field_project(conn, parent["project_id"]):
+        return  # Legacy parents receive their children during block initialization.
+    document, _ = document_state(conn, parent_id)
+    if child_id not in page_link_blocks(document):
+        state = document.get_state()
+        append_page_link(document, conn.execute("SELECT * FROM research_pages WHERE id=?", (child_id,)).fetchone())
+        persist_document_delta(conn, parent_id, document, state, actor)
+
+
+def remove_field_child_link(conn: sqlite3.Connection, parent_id: str | None, child_id: str, actor: str) -> None:
+    if not parent_id:
+        return
+    parent = conn.execute("SELECT * FROM research_pages WHERE id=?", (parent_id,)).fetchone()
+    if not parent or parent["editor_format"] != "blocks" or not is_field_project(conn, parent["project_id"]):
+        return
+    document, _ = document_state(conn, parent_id)
+    state = document.get_state()
+    def remove(node):
+        for index in reversed(range(len(node.children))):
+            element = node.children[index]
+            if not isinstance(element, XmlElement):
+                continue
+            if element.tag == "blockContainer" and any(isinstance(child, XmlElement) and child.tag == "pageLink" and child.attributes.get("pageId") == child_id for child in element.children):
+                del node.children[index]
+            else:
+                remove(element)
+    remove(document["notebook"])
+    persist_document_delta(conn, parent_id, document, state, actor)
+
+
+def rename_field_child_link(conn: sqlite3.Connection, parent_id: str | None, child_id: str, title: str, actor: str) -> None:
+    if not parent_id:
+        return
+    parent = conn.execute("SELECT * FROM research_pages WHERE id=?", (parent_id,)).fetchone()
+    if not parent or parent["editor_format"] != "blocks" or not is_field_project(conn, parent["project_id"]):
+        return
+    document, _ = document_state(conn, parent_id)
+    state = document.get_state()
+    pending = list(document["notebook"].children)
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, XmlElement):
+            continue
+        if node.tag == "pageLink" and node.attributes.get("pageId") == child_id:
+            node.attributes["title"] = title
+        pending.extend(node.children)
+    persist_document_delta(conn, parent_id, document, state, actor)
+
+
+def archive_page_branch(conn: sqlite3.Connection, page: sqlite3.Row, actor: str) -> str:
+    batch = ident()
+    # A restore must not revive descendants trashed before this operation.
+    conn.execute("""WITH RECURSIVE subtree(id) AS (
+        SELECT id FROM research_pages WHERE id=?
+        UNION SELECT p.id FROM research_pages p JOIN subtree s ON p.parent_id=s.id
+        WHERE p.project_id=? AND p.archived_at IS NULL
+    ) UPDATE research_pages SET archived_at=?,archive_batch=? WHERE id IN (SELECT id FROM subtree)""",
+                 (page["id"], page["project_id"], now(), batch))
+    event(conn, page["project_id"], actor, "page.archived", page["id"])
+    return batch
+
+
+def sync_field_page_links(conn: sqlite3.Connection, page: sqlite3.Row, before: dict[str, set[str]], document: Doc, actor: str) -> None:
+    """Removing an owned child block trashes that page; removing a reference does not.
+
+    Executed atomically with the accepted CRDT update. Undo restores ONLY the
+    batch deleted by that very block, not unrelated trash or moved/sibling pages.
+    Multiple links to the same child keep it alive until the last is removed.
+    """
+    if not is_field_project(conn, page["project_id"]):
+        return
+    after = page_link_blocks(document)
+    removed = []
+    restored = []
+    for target in before.keys() - after.keys():
+        child = conn.execute("SELECT * FROM research_pages WHERE id=? AND parent_id=? AND project_id=? AND archived_at IS NULL", (target, page["id"], page["project_id"])).fetchone()
+        if child:
+            removed.append(child)
+    for target in after.keys() - before.keys():
+        trash = conn.execute("SELECT t.*,p.archived_at,p.archive_batch current_batch,p.project_id,p.parent_id current_parent FROM page_link_trash t JOIN research_pages p ON p.id=t.page_id WHERE t.page_id=? AND t.parent_id=?", (target, page["id"])).fetchone()
+        if trash and trash["archived_at"] and trash["current_parent"] == page["id"] and trash["current_batch"] == trash["archive_batch"] and after[target].intersection(json.loads(trash["block_ids"])):
+            restored.append(trash)
+    if removed or restored:
+        # Deleting a page is more powerful than editing its text. Page-only
+        # editors cannot use document updates to bypass project trash permissions.
+        project_detail(conn, page["project_id"], actor, 4)
+    for child in removed:
+        batch = archive_page_branch(conn, child, actor)
+        conn.execute("INSERT OR REPLACE INTO page_link_trash VALUES (?,?,?,?)", (child["id"], page["id"], json.dumps(sorted(before[child["id"]])), batch))
+    for trash in restored:
+        conn.execute("UPDATE research_pages SET archived_at=NULL,archive_batch=NULL WHERE project_id=? AND archive_batch=?", (page["project_id"], trash["archive_batch"]))
+        conn.execute("DELETE FROM page_link_trash WHERE page_id=?", (trash["page_id"],))
+        event(conn, page["project_id"], actor, "page.restored", trash["page_id"])
+
+
+def block_signature(document: Doc, block_id: str) -> str | None:
+    """Read a block's own content, not descendants or another block's edits."""
+    pending = list(document["notebook"].children)
+    while pending:
+        element = pending.pop()
+        if not isinstance(element, XmlElement):
+            continue
+        if element.tag == "blockContainer" and element.attributes.get("id") == block_id:
+            attributes = json.dumps(dict(element.attributes), sort_keys=True)
+            content = "".join(str(child) for child in element.children
+                              if not isinstance(child, XmlElement) or child.tag != "blockGroup")
+            return attributes + content
+        pending.extend(element.children)
+    return None
+
+
+@router.get("/pages/{page_id}/blocks/{block_id}/activity")
+def get_block_activity(page_id: str, block_id: str, user: dict = Depends(current_user)):
+    """Attribute accepted changes to authenticated actors in the durable log.
+
+    Browser-provided projection JSON and the current viewer are not evidence of
+    authorship. Repeated/idempotent updates do not change the last-edit record.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", block_id):
+        raise HTTPException(422, "Invalid block identifier")
+    with db() as conn:
+        page_detail(conn, page_id, user["id"])
+        revision = conn.execute("SELECT COALESCE(MAX(seq),0) FROM page_updates WHERE page_id = ?", (page_id,)).fetchone()[0]
+        cache_key = (str(_database_path()), page_id, revision, block_id)
+        with _BLOCK_ACTIVITY_LOCK:
+            cached = _BLOCK_ACTIVITY_CACHE.get(cache_key)
+            if cached:
+                _BLOCK_ACTIVITY_CACHE.move_to_end(cache_key)
+                return {"block_id": block_id, "revision": revision, "edited_by": public_user(conn, cached[0]), "edited_at": cached[1]}
+        document = Doc({"markdown": Text(), "notebook": XmlFragment()})
+        previous = None
+        last_edit = None
+        revision = 0
+        for row in conn.execute("SELECT seq,author_id,update_blob,created_at FROM page_updates WHERE page_id = ? ORDER BY seq", (page_id,)):
+            document.apply_update(row["update_blob"])
+            signature = block_signature(document, block_id)
+            if signature is not None and signature != previous:
+                last_edit = (row["author_id"], row["created_at"])
+            previous = signature
+            revision = row["seq"]
+        if previous is None:
+            raise HTTPException(404, "Block not found")
+        if last_edit:
+            with _BLOCK_ACTIVITY_LOCK:
+                _BLOCK_ACTIVITY_CACHE[(str(_database_path()), page_id, revision, block_id)] = last_edit
+                while len(_BLOCK_ACTIVITY_CACHE) > 256:
+                    _BLOCK_ACTIVITY_CACHE.popitem(last=False)
+        return {"block_id": block_id, "revision": revision,
+                "edited_by": public_user(conn, last_edit[0]) if last_edit else None,
+                "edited_at": last_edit[1] if last_edit else None}
+
+
 @router.get("/pages/{page_id}/document")
 def get_document(page_id: str, user: dict = Depends(current_user)):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         page = page_detail(conn, page_id, user["id"])
         document, revision = document_state(conn, page_id)
+        # One-time, non-destructive repair for notebooks created before child
+        # pages had structural blocks. Never infer deletion from absent old links.
+        if page["editor_format"] == "blocks" and not page["field_links_ready"] and is_field_project(conn, page["project_id"]):
+            state = document.get_state()
+            links = page_link_blocks(document)
+            for child in conn.execute("SELECT * FROM research_pages WHERE parent_id=? AND archived_at IS NULL ORDER BY position,created_at", (page_id,)):
+                if child["id"] not in links:
+                    append_page_link(document, child)
+            persist_document_delta(conn, page_id, document, state, page["updated_by"])
+            conn.execute("UPDATE research_pages SET field_links_ready=1 WHERE id=?", (page_id,))
+            revision = conn.execute("SELECT COALESCE(MAX(seq),0) FROM page_updates WHERE page_id=?", (page_id,)).fetchone()[0]
         return {"format": page["editor_format"], "revision": revision,
                 "update": base64.b64encode(document.get_update()).decode("ascii"),
                 "legacy_markdown": str(document["markdown"])}
@@ -876,6 +1190,13 @@ def initialize_blocks(page_id: str, payload: BlockDocumentInput, user: dict = De
         legacy = str(document["markdown"])
         if legacy:
             conn.execute("INSERT INTO page_versions (id,page_id,author_id,label,markdown,created_at) VALUES (?,?,?,?,?,?)", (ident(), page_id, user["id"], "Original Markdown before block conversion", legacy, now()))
+        if is_field_project(conn, page["project_id"]):
+            links = page_link_blocks(proposed)
+            for child in conn.execute("SELECT * FROM research_pages WHERE parent_id=? AND archived_at IS NULL ORDER BY position,created_at", (page_id,)):
+                if child["id"] not in links:
+                    append_page_link(proposed, child)
+            update = proposed.get_update()
+            conn.execute("UPDATE research_pages SET field_links_ready=1 WHERE id=?", (page_id,))
         conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (page_id, user["id"], update, now()))
         conn.execute("UPDATE research_pages SET editor_format = 'blocks',updated_by = ?,updated_at = ? WHERE id = ?", (user["id"], now(), page_id))
         event(conn, page["project_id"], user["id"], "page.blocks_enabled", page_id)
@@ -924,13 +1245,167 @@ def search_pages(query: str = "", field: str | None = None, project_id: str | No
         return {"pages": results}
 
 
+@router.get("/tab-pages")
+def tab_pages(query: str = "", field: str | None = None, user: dict = Depends(current_user)):
+    """Only the caller's own field notebooks: no cross-project title discovery."""
+    if len(query) > 200 or (field is not None and field not in FIELDS):
+        raise HTTPException(422, "Invalid page search")
+    query = query.strip().casefold()
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT p.*,w.field,n.opened_at,c.markdown FROM research_pages p "
+            "JOIN field_workspaces w ON w.project_id=p.project_id AND w.user_id=? "
+            "LEFT JOIN notebook_preferences n ON n.page_id=p.id AND n.user_id=? "
+            "LEFT JOIN page_projections c ON c.page_id=p.id "
+            "WHERE p.archived_at IS NULL AND (? IS NULL OR w.field=?) "
+            "ORDER BY COALESCE(n.opened_at,p.updated_at) DESC,p.id",
+            (user["id"], user["id"], field, field),
+        ).fetchall()
+        results = []
+        for row in rows:
+            if not page_access(conn, row, user["id"]):
+                continue
+            if query and query not in row["title"].casefold():
+                continue
+            # A projection is an index, not a source of permission or edit history.
+            results.append({"id": row["id"], "title": row["title"], "field": row["field"],
+                            "icon": row["icon"], "parent_id": row["parent_id"],
+                            "updated_at": row["updated_at"], "opened_at": row["opened_at"],
+                            "snippet": (row["markdown"] or "")[:500]})
+            if len(results) >= 100:
+                break
+        return {"pages": results}
+
+
+class ViewHistoryInput(BaseModel):
+    show_history: bool
+
+
+@router.post("/pages/{page_id}/view")
+def record_page_view(page_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        page_detail(conn, page_id, user["id"])
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        recent = conn.execute("SELECT 1 FROM page_views WHERE page_id=? AND user_id=? AND viewed_at>=? LIMIT 1", (page_id, user["id"], cutoff)).fetchone()
+        if not recent:
+            conn.execute("INSERT INTO page_views (page_id,user_id,viewed_at) VALUES (?,?,?)", (page_id, user["id"], now()))
+        pref = conn.execute("SELECT show_history FROM page_view_preferences WHERE page_id=? AND user_id=?", (page_id, user["id"])).fetchone()
+        return {"recorded": not bool(recent), "show_history": bool(pref and pref["show_history"])}
+
+
+@router.put("/pages/{page_id}/view-history")
+def view_history_preference(page_id: str, payload: ViewHistoryInput, user: dict = Depends(current_user)):
+    with db() as conn:
+        page_detail(conn, page_id, user["id"])
+        conn.execute("INSERT INTO page_view_preferences VALUES (?,?,?) ON CONFLICT(page_id,user_id) DO UPDATE SET show_history=excluded.show_history", (page_id, user["id"], payload.show_history))
+    return {"show_history": payload.show_history}
+
+
+@router.get("/pages/{page_id}/activity")
+def page_activity(page_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        page = page_detail(conn, page_id, user["id"])
+        rows = conn.execute("SELECT * FROM collaboration_events WHERE subject_id=? AND action LIKE 'page.%' ORDER BY id DESC LIMIT 100", (page_id,)).fetchall()
+        updates = [{"id": f"event-{row['id']}", "action": row["action"], "at": row["created_at"],
+                    "actor": public_user(conn, row["actor_id"]), "changes": json.loads(row["details_json"])} for row in rows]
+        # Coalesce the durable CRDT log by author/minute instead of presenting each keystroke.
+        edits = conn.execute("SELECT MAX(seq) seq,author_id,MAX(created_at) at FROM page_updates WHERE page_id=? GROUP BY author_id,SUBSTR(created_at,1,16) ORDER BY at DESC LIMIT 100", (page_id,)).fetchall()
+        updates.extend({"id": f"edit-{row['seq']}", "action": "page.content", "at": row["at"], "actor": public_user(conn, row["author_id"]), "changes": {}} for row in edits)
+        updates.sort(key=lambda item: item["at"], reverse=True)
+        return {"created_by": public_user(conn, page["created_by"]), "created_at": page["created_at"],
+                "edited_by": public_user(conn, page["updated_by"]), "edited_at": page["updated_at"],
+                "can_analyze": page_access(conn, page, user["id"]) >= 3, "updates": updates[:100]}
+
+
+@router.get("/pages/{page_id}/analytics")
+def page_analytics(page_id: str, days: int = 28, user: dict = Depends(current_user)):
+    if days not in {7, 28, 90}:
+        raise HTTPException(422, "Choose 7, 28 or 90 days")
+    with db() as conn:
+        page = page_detail(conn, page_id, user["id"], 3)
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=days-1)
+        after = start.isoformat()
+        before = (today + timedelta(days=1)).isoformat()
+        counts = conn.execute("SELECT SUBSTR(viewed_at,1,10) day,COUNT(*) views,COUNT(DISTINCT user_id) unique_views FROM page_views WHERE page_id=? AND viewed_at>=? AND viewed_at<? GROUP BY day", (page_id, after, before)).fetchall()
+        by_day = {row["day"]: dict(row) for row in counts}
+        series = [by_day.get((start + timedelta(days=i)).isoformat(), {"day": (start + timedelta(days=i)).isoformat(), "views": 0, "unique_views": 0}) for i in range(days)]
+        totals = conn.execute("SELECT COUNT(*) views,COUNT(DISTINCT user_id) unique_views FROM page_views WHERE page_id=? AND viewed_at>=? AND viewed_at<?", (page_id, after, before)).fetchone()
+        viewers = conn.execute("SELECT v.user_id,MAX(v.viewed_at) last_viewed_at FROM page_views v JOIN page_view_preferences p ON p.page_id=v.page_id AND p.user_id=v.user_id AND p.show_history=1 WHERE v.page_id=? AND v.viewed_at>=? AND v.viewed_at<? GROUP BY v.user_id ORDER BY last_viewed_at DESC LIMIT 50", (page_id, after, before)).fetchall()
+        pref = conn.execute("SELECT show_history FROM page_view_preferences WHERE page_id=? AND user_id=?", (page_id, user["id"])).fetchone()
+        return {"days": days, "timezone": "UTC", "totals": dict(totals), "series": series,
+                "viewers": [{"person": public_user(conn, row["user_id"]), "last_viewed_at": row["last_viewed_at"]} for row in viewers],
+                "show_history": bool(pref and pref["show_history"]),
+                "created_by": public_user(conn, page["created_by"]), "created_at": page["created_at"],
+                "edited_by": public_user(conn, page["updated_by"]), "edited_at": page["updated_at"]}
+
+
+@router.get("/pages/{page_id}/sharing")
+def page_sharing(page_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        page = page_detail(conn, page_id, user["id"])
+        project = conn.execute("SELECT * FROM research_projects WHERE id=?", (page["project_id"],)).fetchone()
+        manage = project_access(conn, project, user["id"]) >= 4
+        members = {project["owner_id"]: {**public_user(conn, project["owner_id"]), "role": "manager", "inherited": True}}
+        if manage:
+            ids = {row["user_id"] for row in conn.execute("SELECT user_id FROM project_members WHERE project_id=?", (project["id"],))}
+            if project["group_id"]:
+                ids.update(row["user_id"] for row in conn.execute("SELECT user_id FROM group_members WHERE group_id=?", (project["group_id"],)))
+            for member_id in ids:
+                level = project_access(conn, project, member_id)
+                if level:
+                    members[member_id] = {**public_user(conn, member_id), "role": next(role for role, value in ACCESS.items() if value == level), "inherited": True}
+            for share in conn.execute("SELECT * FROM page_shares WHERE page_id=?", (page_id,)):
+                # Display inherited access separately: lowering a direct grant cannot revoke project access.
+                if share["user_id"] not in members:
+                    members[share["user_id"]] = {**public_user(conn, share["user_id"]), "role": share["role"], "inherited": False}
+        elif user["id"] not in members:
+            members[user["id"]] = {**public_user(conn, user["id"]), "role": next(role for role, value in ACCESS.items() if value == page_access(conn, page, user["id"])), "inherited": bool(project_access(conn, project, user["id"]))}
+        return {"can_manage": manage, "members": list(members.values()), "pending_invites": pending_invites(conn, "page", page_id) if manage else [],
+                "general_access": "invited", "project_access": bool(project["group_id"] or conn.execute("SELECT 1 FROM project_members WHERE project_id=?", (project["id"],)).fetchone())}
+
+
+class BatchPageInvite(BaseModel):
+    recipients: list[str] = Field(min_length=1, max_length=20)
+    role: Literal["viewer", "commenter", "editor"] = "viewer"
+
+
+@router.post("/pages/{page_id}/batch-invites", status_code=201)
+def invite_page_batch(page_id: str, payload: BatchPageInvite, user: dict = Depends(current_user)):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        page = page_detail(conn, page_id, user["id"])
+        project_detail(conn, page["project_id"], user["id"], 4)
+        targets = set()
+        for value in payload.recipients:
+            value = value.strip()
+            if not value or len(value) > 254:
+                raise HTTPException(422, "Enter a valid account name or registered email")
+            if "@" in value:
+                rows = conn.execute("SELECT id FROM users WHERE LOWER(email)=LOWER(?) AND status='active'", (value,)).fetchall()
+                if len(rows) != 1:
+                    raise HTTPException(404, "An account was not found. Use a unique name or an email already registered in this app.")
+                target_id = rows[0]["id"]
+            else:
+                target_id = find_person(conn, value, user["id"])["id"]
+            if target_id == user["id"]:
+                raise HTTPException(400, "You cannot invite yourself")
+            not_blocked(conn, user["id"], target_id)
+            if page_access(conn, page, target_id):
+                raise HTTPException(409, "An account already has access. Change its existing permission instead.")
+            targets.add(target_id)
+        invitations = [invite(conn, "page", page_id, target, user["id"], payload.role) for target in sorted(targets)]
+        return {"invites": invitations}
+
+
 @router.get("/pages/{page_id}/references")
 def page_references(page_id: str, user: dict = Depends(current_user)):
     with db() as conn:
         page = page_detail(conn, page_id, user["id"])
         # Page-only guests must not discover sibling titles or project evidence.
         project = conn.execute("SELECT * FROM research_projects WHERE id=?", (page["project_id"],)).fetchone()
-        pages = conn.execute("SELECT id,title,parent_id,position,created_at FROM research_pages WHERE project_id=? AND archived_at IS NULL ORDER BY position,created_at", (page["project_id"],)).fetchall() if project_access(conn, project, user["id"]) else []
+        pages = conn.execute("SELECT p.id,p.title,p.parent_id,p.position,p.created_at,p.icon,p.updated_at,COALESCE(n.favorite,0) favorite FROM research_pages p LEFT JOIN notebook_preferences n ON n.page_id=p.id AND n.user_id=? WHERE p.project_id=? AND p.archived_at IS NULL ORDER BY p.position,p.created_at", (user["id"], page["project_id"])).fetchall() if project_access(conn, project, user["id"]) else []
         evidence = conn.execute("SELECT * FROM project_evidence WHERE project_id=?", (page["project_id"],)).fetchall() if project_access(conn, project, user["id"]) else []
         backlinks = []
         for item in conn.execute("SELECT p.*,c.markdown FROM research_pages p JOIN page_projections c ON c.page_id=p.id WHERE p.id!=? AND p.archived_at IS NULL", (page_id,)):
@@ -959,6 +1434,7 @@ def get_page(page_id: str, user: dict = Depends(current_user)):
         versions = conn.execute("SELECT id,label,author_id,created_at FROM page_versions WHERE page_id = ? ORDER BY created_at DESC LIMIT 30", (page_id,)).fetchall()
         shares = conn.execute("SELECT * FROM page_shares WHERE page_id = ?", (page_id,)).fetchall()
         return {"page": {**dict(page), "my_access": page_access(conn, page, user["id"]), "can_manage": project_access(conn, project, user["id"]) >= 4},
+                "last_editor": public_user(conn, page["updated_by"]),
                 "project": {"id": project["id"], "name": project["name"], "field": project["field"], "group_id": project["group_id"], "my_access": project_access(conn, project, user["id"])},
                 "comments": [{**dict(comment), "author": public_user(conn, comment["author_id"])} for comment in comments],
                 "versions": [{**dict(version), "author": public_user(conn, version["author_id"])} for version in versions],
@@ -969,9 +1445,14 @@ def get_page(page_id: str, user: dict = Depends(current_user)):
 @router.patch("/pages/{page_id}")
 def edit_page(page_id: str, payload: PagePatch, user: dict = Depends(current_user)):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         page = page_detail(conn, page_id, user["id"], 3)
         title = payload.title.strip() if payload.title is not None else page["title"]
+        if not title:
+            raise HTTPException(422, "Page title cannot be empty")
         parent_id = payload.parent_id if "parent_id" in payload.model_fields_set else page["parent_id"]
+        if parent_id and conn.execute("SELECT 1 FROM field_workspaces WHERE home_page_id=?", (page_id,)).fetchone():
+            raise HTTPException(422, "The field home must stay at the root")
         if "parent_id" in payload.model_fields_set:
             project_detail(conn, page["project_id"], user["id"], 3)
         if parent_id:
@@ -989,30 +1470,81 @@ def edit_page(page_id: str, payload: PagePatch, user: dict = Depends(current_use
                 cursor = conn.execute("SELECT * FROM research_pages WHERE id = ?", (cursor["parent_id"],)).fetchone() if cursor["parent_id"] else None
         timestamp = now()
         conn.execute("UPDATE research_pages SET title = ?, parent_id = ?, updated_by = ?, updated_at = ? WHERE id = ?", (title, parent_id, user["id"], timestamp, page_id))
-        event(conn, page["project_id"], user["id"], "page.updated", page_id)
+        if parent_id != page["parent_id"]:
+            conn.execute("UPDATE research_pages SET position=(SELECT COALESCE(MAX(position),-1)+1 FROM research_pages WHERE project_id=? AND parent_id IS ?) WHERE id=?", (page["project_id"], parent_id, page_id))
+            conn.execute("DELETE FROM page_link_trash WHERE page_id=?", (page_id,))
+            remove_field_child_link(conn, page["parent_id"], page_id, user["id"])
+            if parent_id:
+                add_field_child_link(conn, parent_id, page_id, user["id"])
+        for key in ("icon", "cover", "full_width"):
+            value = getattr(payload, key)
+            if value is not None:
+                conn.execute(f"UPDATE research_pages SET {key}=? WHERE id=?", (value, page_id))
+        if title != page["title"]:
+            rename_field_child_link(conn, parent_id, page_id, title, user["id"])
+        changes = {key: {"before": page[key], "after": value} for key, value in
+                   (("title", title), ("parent_id", parent_id), ("icon", payload.icon),
+                    ("cover", payload.cover), ("full_width", payload.full_width))
+                   if (value is not None or key == "parent_id") and value != page[key]}
+        event(conn, page["project_id"], user["id"], "page.updated", page_id, changes)
         return {"page": dict(conn.execute("SELECT * FROM research_pages WHERE id = ?", (page_id,)).fetchone())}
 
 
 @router.post("/pages/{page_id}/archive")
 def archive_page(page_id: str, user: dict = Depends(current_user)):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         page = page_detail(conn, page_id, user["id"])
         project_detail(conn, page["project_id"], user["id"], 4)
-        conn.execute("UPDATE research_pages SET archived_at = ? WHERE id = ?", (now(), page_id))
-        event(conn, page["project_id"], user["id"], "page.archived", page_id)
+        if conn.execute("SELECT 1 FROM field_workspaces WHERE home_page_id=?", (page_id,)).fetchone():
+            raise HTTPException(409, "The field home cannot be archived")
+        archive_page_branch(conn, page, user["id"])
+        conn.execute("DELETE FROM page_link_trash WHERE page_id=?", (page_id,))
+        remove_field_child_link(conn, page["parent_id"], page_id, user["id"])
     return {"status": "archived"}
 
 
 @router.post("/pages/{page_id}/restore")
 def restore_page(page_id: str, user: dict = Depends(current_user)):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         page = conn.execute("SELECT * FROM research_pages WHERE id = ?", (page_id,)).fetchone()
         if not page:
             raise HTTPException(404, "Page not found")
         project_detail(conn, page["project_id"], user["id"], 4)
-        conn.execute("UPDATE research_pages SET archived_at = NULL WHERE id = ?", (page_id,))
+        if page["parent_id"] and conn.execute("SELECT 1 FROM research_pages WHERE id=? AND archived_at IS NOT NULL", (page["parent_id"],)).fetchone():
+            raise HTTPException(409, "Restore the parent page first")
+        if page["archive_batch"]:
+            conn.execute("UPDATE research_pages SET archived_at=NULL,archive_batch=NULL WHERE project_id=? AND archive_batch=?", (page["project_id"], page["archive_batch"]))
+        else:
+            conn.execute("UPDATE research_pages SET archived_at = NULL WHERE id = ?", (page_id,))
+        conn.execute("DELETE FROM page_link_trash WHERE page_id=?", (page_id,))
+        if page["parent_id"]:
+            add_field_child_link(conn, page["parent_id"], page_id, user["id"])
         event(conn, page["project_id"], user["id"], "page.restored", page_id)
     return {"status": "restored"}
+
+
+@router.post("/pages/{page_id}/duplicate", status_code=201)
+def duplicate_page(page_id: str, user: dict = Depends(current_user)):
+    """Copy this page's CRDT, not its shares, comments, history, or descendants."""
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        page = page_detail(conn, page_id, user["id"], 3)
+        project_detail(conn, page["project_id"], user["id"], 3)
+        new_id, timestamp = ident(), now()
+        document, revision = document_state(conn, page_id)
+        position = conn.execute("SELECT COALESCE(MAX(position),-1)+1 FROM research_pages WHERE project_id=? AND parent_id IS ?", (page["project_id"], page["parent_id"])).fetchone()[0]
+        conn.execute("INSERT INTO research_pages (id,project_id,parent_id,title,created_by,updated_by,created_at,updated_at,position,editor_format,icon,cover,full_width) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                     (new_id, page["project_id"], page["parent_id"], page["title"][:113] + " (copy)", user["id"], user["id"], timestamp, timestamp, position, page["editor_format"], page["icon"], page["cover"], page["full_width"]))
+        copied_revision = conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (new_id, user["id"], document.get_update(), timestamp)).lastrowid
+        if page["parent_id"]:
+            add_field_child_link(conn, page["parent_id"], new_id, user["id"])
+        projection = conn.execute("SELECT * FROM page_projections WHERE page_id=? AND revision=?", (page_id, revision)).fetchone()
+        if projection:
+            conn.execute("INSERT INTO page_projections VALUES (?,?,?,?,?)", (new_id, copied_revision, projection["markdown"], projection["blocks_json"], timestamp))
+        event(conn, page["project_id"], user["id"], "page.duplicated", new_id)
+        return {"page": dict(conn.execute("SELECT * FROM research_pages WHERE id=?", (new_id,)).fetchone())}
 
 
 @router.post("/pages/{page_id}/invites", status_code=201)
@@ -1198,6 +1730,7 @@ async def live_page(websocket: WebSocket, page_id: str):
     last_presence_ids: tuple[str, ...] = ()
     ready_sent = False
     last_access = None
+    tree_revision = None
     recent_updates: deque[float] = deque()
     try:
         while True:
@@ -1213,6 +1746,7 @@ async def live_page(websocket: WebSocket, page_id: str):
                     return
                 access = page_access(conn, page, user_id)
                 rows = conn.execute("SELECT seq, update_blob FROM page_updates WHERE page_id = ? AND seq > ? ORDER BY seq LIMIT 100", (page_id, cursor)).fetchall()
+                latest_tree = conn.execute("SELECT COALESCE(MAX(id),0) FROM collaboration_events WHERE project_id=? AND action IN ('page.created','page.duplicated','page.updated','page.archived','page.restored')", (page["project_id"],)).fetchone()[0]
                 if asyncio.get_running_loop().time() - last_presence_check > 2:
                     active_after = (datetime.now(timezone.utc) - timedelta(seconds=25)).isoformat()
                     presence = conn.execute("SELECT user_id FROM page_presence WHERE page_id = ? AND last_seen >= ? ORDER BY user_id", (page_id, active_after)).fetchall()
@@ -1223,6 +1757,9 @@ async def live_page(websocket: WebSocket, page_id: str):
             for row in rows:
                 await websocket.send_json({"type": "update", "seq": row["seq"], "data": base64.b64encode(row["update_blob"]).decode("ascii")})
                 cursor = row["seq"]
+            if tree_revision is not None and tree_revision != latest_tree and ready_sent:
+                await websocket.send_json({"type": "tree"})
+            tree_revision = latest_tree
             if not rows and not ready_sent:
                 await websocket.send_json({"type": "ready", "access": access, "revision": cursor, "format": page["editor_format"]})
                 ready_sent = True
@@ -1282,9 +1819,15 @@ async def live_page(websocket: WebSocket, page_id: str):
                 await websocket.send_json({"type": "error", "message": "Invalid collaborative update"})
                 continue
             with db() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 latest_page = page_detail(conn, page_id, user_id, 3)
                 if latest_page["editor_format"] == "blocks" and envelope.get("format") != "blocks":
                     raise HTTPException(409, "Reload block editor")
+                if latest_page["editor_format"] == "blocks" and is_field_project(conn, latest_page["project_id"]):
+                    document, _ = document_state(conn, page_id)
+                    before = page_link_blocks(document)
+                    document.apply_update(update)
+                    sync_field_page_links(conn, latest_page, before, document, user_id)
                 saved = conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (page_id, user_id, update, now()))
                 conn.execute("UPDATE research_pages SET updated_by = ?, updated_at = ? WHERE id = ?", (user_id, now(), page_id))
             message_id = envelope.get("id")

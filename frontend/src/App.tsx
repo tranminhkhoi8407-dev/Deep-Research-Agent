@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { profileCompletionFromHash, profileSetupHash, type ProfileCompletion } from './profileNavigation';
 import { fieldRoute } from './fieldNavigation';
+import { projectWorkspaceRoute } from './projectNavigation';
+import { SocialProvider, SocialToolbar } from './SocialCenter';
 import {
   AlertCircle,
   ArrowRight,
@@ -1383,10 +1385,13 @@ export default function App() {
   }
 
   const standaloneField = activeView === 'domains' && !informationView && (!!fieldRoute(routeHash) || routeHash === '#/fields/guide');
+  const standaloneProject = activeView === 'collab' && !informationView && !!authUser.public_name && !!projectWorkspaceRoute(routeHash);
+  const standaloneWorkspace = standaloneField || standaloneProject;
   return (
-    <div className={`app-shell app-shell--ready${standaloneField ? ' app-shell--field' : ''}`}>
+    <SocialProvider key={authUser.id} apiBase={API_BASE} user={authUser} language={language} onEditProfile={openProfileEditor}>
+    <div className={`app-shell app-shell--ready${standaloneWorkspace ? ' app-shell--field' : ''}${standaloneProject ? ' app-shell--project' : ''}`}>
       {showWelcome && <WelcomeTransition user={authUser} language={language} />}
-      {!standaloneField && <>
+      {!standaloneWorkspace && <>
       <header className="topbar">
         <button
           className="brand brand-button"
@@ -1421,6 +1426,7 @@ export default function App() {
               </button>
             ))}
           </div>
+          <SocialToolbar />
           <UserMenu
             user={authUser}
             language={language}
@@ -2114,7 +2120,7 @@ export default function App() {
       ) : activeView === "collab" ? (
         <main className="product-page collab-page-shell view-enter" key="collab">
           <Suspense fallback={<div className="domain-loading" role="status"><LoaderCircle className="spin" size={24} />{language === 'vi' ? 'Đang mở dự án…' : 'Opening projects…'}</div>}>
-            <CollaborationHub apiBase={API_BASE} language={language} user={authUser} reports={storedReports} initialField={collabField} onEditProfile={openProfileEditor} onPrepareResearch={openDomainResearch} />
+            <CollaborationHub apiBase={API_BASE} language={language} user={authUser} reports={storedReports} initialField={collabField} onEditProfile={openProfileEditor} onPrepareResearch={openDomainResearch} appearance={appearance} onAppearanceChange={setAppearance} onLanguageChange={setLanguage} onLogout={() => void logout()} />
           </Suspense>
         </main>
       ) : activeView === "admin" && authUser.role === "admin" ? (
@@ -2172,7 +2178,7 @@ export default function App() {
         </main>
       )}
 
-      {!standaloneField && <AppFooter
+      {!standaloneWorkspace && <AppFooter
         language={language}
         health={health}
         onNavigate={navigateTo}
@@ -2189,7 +2195,7 @@ export default function App() {
         clearRequest={() => setTourRequest(null)}
         onNavigate={navigateTo}
         onResetLibrary={() => setLibraryTourReset((value) => value + 1)}
-        hideLauncher={standaloneField}
+        hideLauncher={standaloneWorkspace}
       /></Suspense>}
 
       {notice && (
@@ -2199,6 +2205,7 @@ export default function App() {
         </div>
       )}
     </div>
+    </SocialProvider>
   );
 }
 

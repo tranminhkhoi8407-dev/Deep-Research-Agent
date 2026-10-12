@@ -1,0 +1,79 @@
+.social-toolbar { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.social-toolbar-button { position: relative; display: grid; place-items: center; width: 37px; height: 37px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); }
+.social-toolbar-button:hover { background: var(--blue-soft); color: var(--blue); }
+.social-toolbar-button.is-unavailable { border-color: var(--red); }
+.social-badge { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 12px; font-size: 10px; font-weight: 800; color: white; background: var(--blue); border: 2px solid var(--surface); }
+.social-dialog { position: fixed; inset: 85px 24px auto auto; width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 110px); margin: 0; padding: 0; overflow: auto; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.social-dialog--friends { width: min(900px, calc(100vw - 40px)); }
+.social-dialog::backdrop { background: rgba(12, 21, 36, .25); }
+.social-dialog-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.social-dialog-header h2 { margin: 0; font-size: 19px; }
+.social-dialog button, .friends-panel button, .social-invite-form button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; }
+.social-dialog button:hover:not(:disabled), .friends-panel button:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.social-dialog button:disabled, .friends-panel button:disabled { opacity: .5; }
+.social-dialog button:focus-visible, .friends-panel button:focus-visible, .social-toolbar button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.social-dialog .social-icon-button, .friends-panel .social-icon-button { padding: 7px; min-width: 32px; flex-shrink: 0; }
+.friends-panel { padding: 20px; color: var(--ink); background: var(--surface); border-radius: 14px; }
+.social-help { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+.social-help svg { flex-shrink: 0; margin-top: 2px; }
+.social-tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+.social-tabs button { gap: 7px; background: transparent; border: 1px solid transparent; }
+.social-tabs button[aria-pressed='true'] { background: var(--blue-soft); color: var(--blue); border-color: var(--line); font-weight: 700; }
+.social-tabs small { min-width: 18px; padding: 1px 5px; border-radius: 6px; background: var(--surface-soft); font-size: 10px; }
+.social-search { display: flex; align-items: center; gap: 10px; padding: 10px 13px; margin: 20px 0 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); }
+.social-search:focus-within { border-color: var(--blue); }
+.social-search input { width: 100%; min-width: 0; border: 0; outline: none; font: inherit; background: transparent; color: var(--ink); }
+.social-person { display: flex; align-items: center; gap: 12px; padding: 17px 0; border-bottom: 1px solid var(--line); }
+.social-avatar { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 50%; background: var(--blue-soft); color: var(--blue); font-weight: 800; overflow: hidden; }
+.social-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.social-person > div:not(.social-person-actions) { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.social-person strong { overflow-wrap: anywhere; font-size: 14px; }
+.social-person small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.social-person-actions { display: flex; justify-content: flex-end; align-items: center; gap: 5px; flex-wrap: wrap; }
+.social-person-actions > span { color: var(--muted); font-size: 12px; }
+.social-empty { display: grid; justify-items: center; padding: 38px 20px; text-align: center; color: var(--muted); gap: 10px; }
+.social-empty p, .social-empty h3 { margin: 0; }
+.social-empty h3 { font-size: 16px; color: var(--ink); }
+.social-error, .social-notice, .social-confirm { margin: 14px 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; }
+.social-error { color: var(--red); display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.social-error button { flex-shrink: 0; }
+.social-notice { color: var(--green); }
+.social-confirm { background: var(--surface-soft); }
+.social-confirm p { margin: 8px 0; color: var(--muted); }
+.social-confirm > div { display: flex; gap: 8px; }
+.social-invite-form { padding: 15px; margin-top: 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); display: grid; gap: 12px; }
+.social-invite-form header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.social-invite-form label { display: grid; gap: 7px; font-size: 12px; color: var(--muted); }
+.social-invite-form select, .social-notification-tools select { border: 1px solid var(--line); border-radius: 8px; padding: 8px; min-width: 0; width: 100%; background: var(--surface); color: var(--ink); font: inherit; font-size: 12px; }
+.social-invite-form > button { justify-self: start; }
+.social-notification-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 15px 18px 8px; }
+.social-notification-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 18px 15px; }
+.social-notification-tools select { width: auto; }
+.social-notification-tools button { font-size: 11px; }
+.notifications-panel > .social-error { margin: 10px 18px; }
+.social-notification-list { max-height: 52dvh; overflow: auto; overscroll-behavior: contain; }
+.social-notification { display: flex; align-items: flex-start; gap: 11px; padding: 17px 20px; border-top: 1px solid var(--line); }
+.social-notification.is-unread { background: var(--blue-soft); }
+.social-notification-body { display: grid; gap: 5px; min-width: 0; flex: 1; }
+.social-notification-body > strong { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.social-notification-body small { font-size: 11px; color: var(--muted); }
+.social-notification-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.social-unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); flex-shrink: 0; margin-top: 7px; }
+.social-notification-footer { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; gap: 10px; border-top: 1px solid var(--line); }
+.social-notification-footer > span { font-size: 11px; color: var(--muted); }
+.social-notification-footer > div { display: flex; gap: 6px; }
+.social-settings { display: grid; gap: 10px; padding: 16px 20px; margin: 0 18px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
+.social-settings p { margin: 0; color: var(--muted); font-size: 12px; }
+.social-settings label { display: flex; gap: 10px; font-size: 13px; }
+@media (max-width: 650px) {
+  .social-dialog, .social-dialog--friends { inset: 74px 8px auto 8px; width: calc(100vw - 16px); max-height: calc(100dvh - 88px); }
+  .social-dialog-header { padding: 14px 16px; }
+  .friends-panel { padding: 15px; }
+  .social-person { flex-wrap: wrap; }
+  .social-person-actions { width: 100%; justify-content: flex-start; padding-left: 50px; }
+  .social-toolbar { gap: 3px; }
+  .social-toolbar-button { width: 32px; height: 34px; }
+  .social-notification-tools { flex-wrap: wrap; }
+  .social-notification-list { max-height: 55dvh; }
+}
+@media (prefers-reduced-motion: reduce) { .social-dialog, .social-toolbar-button { transition: none; } }

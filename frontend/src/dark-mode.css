@@ -247,7 +247,7 @@ html[data-theme='dark'] .welcome-progress { background: var(--track); }
 html[data-theme='dark'] .auth-loading-screen > span { background: var(--action-fill); }
 
 /* Editor/tour fixes also work when their stylesheets arrive as lazy chunks. */
-html[data-theme='dark'] .notebook-confirm button:last-child { color: var(--on-action); background: var(--action-fill); }
+html[data-theme='dark'] .notebook-confirm button:last-child:not(.is-danger) { color: var(--on-action); background: var(--action-fill); }
 html[data-theme='dark'] :is(.tour-count,.tour-catalog__action) { color: var(--muted); }
 html[data-theme='dark'] .tour-retry { color: var(--blue); }
 html[data-theme='dark'] .tour-text-button:hover { color: var(--tone-danger-ink); }

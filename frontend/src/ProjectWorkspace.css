@@ -1,0 +1,110 @@
+/* Projects share the Fields writing surface. Project-level tools stay in the sidebar. */
+.app-shell--project > .product-page { height: 100%; margin: 0; padding: 0; max-width: none; }
+.project-workspace { color: var(--ink); }
+.project-workspace [hidden] { display: none !important; }
+.project-main { display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; overflow: hidden; }
+.project-workspace .project-page-canvas { height: auto; }
+.project-main > .notebook-chrome-header { flex: none; position: relative; }
+.project-page-canvas, .project-tool-canvas { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.project-sidebar-identity { display: flex; gap: 10px; align-items: center; margin: 0 4px 17px; min-width: 0; }
+.project-sidebar-identity > span { flex: none; display: grid; place-items: center; width: 35px; height: 35px; border-radius: 8px; background: var(--notebook-tint); color: var(--field-accent); }
+.project-sidebar-identity > div { min-width: 0; }
+.project-sidebar-identity small { display: block; font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+.project-sidebar-identity strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-utilities { flex: none; margin-bottom: 8px; }
+.project-section-label { display: flex; align-items: center; gap: 6px; width: 100%; padding: 8px; border: 0; background: transparent; color: var(--muted); font-size: 10px !important; letter-spacing: .08em; text-align: left; }
+.project-utilities nav { display: grid; gap: 2px; }
+.project-utilities nav button { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; text-align: left; min-width: 0; }
+.project-utilities nav button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-utilities nav button svg { flex: none; }
+.project-utilities nav button:hover { background: var(--line); color: var(--ink); }
+.project-utilities nav button.is-active { background: var(--notebook-tint); color: var(--ink); font-weight: 650; }
+.project-tree-scroll { border-top: 1px solid var(--line); padding-top: 2px; }
+.project-tree-heading { display: flex; align-items: center; justify-content: space-between; }
+.project-tree-heading > button { display: grid; place-items: center; background: transparent; border: 0; padding: 6px; color: var(--muted); border-radius: 5px; }
+.project-tree-heading > button:hover { background: var(--notebook-tint); color: var(--ink); }
+.project-new-page { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 8px; border: 0; background: transparent; color: var(--muted); padding: 9px 8px; border-radius: 6px; font-size: 12px !important; }
+.project-new-page:hover { background: var(--notebook-tint); }
+.project-sidebar-empty { font-size: 12px; color: var(--muted); padding: 5px 9px; }
+.project-sidebar-footer { flex: none; margin-top: 8px; padding-top: 6px; }
+.project-sidebar-footer > .field-sidebar-link, .project-sidebar-footer > button { padding: 7px 9px; }
+.project-sidebar-footer .field-account { margin-top: 5px; padding-top: 5px; }
+.project-social { padding: 4px 6px; }
+.project-social .social-toolbar { display: flex; gap: 6px; }
+.project-social .social-toolbar button { width: auto; padding: 7px; border: 1px solid var(--line); border-radius: 7px; }
+.project-social .social-toolbar button .social-badge { margin-left: 0; }
+.project-loading { display: flex; align-items: center; gap: 8px; padding: 9px 22px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.project-unavailable { padding: 60px 28px; max-width: 700px; margin: auto; }
+.project-unavailable h2 { font-size: 24px; }
+.project-unavailable p { color: var(--muted); line-height: 1.7; }
+.project-unavailable a { color: var(--blue); }
+.project-overview { max-width: 990px; margin: auto; padding: 56px 54px 80px; }
+.project-overview h1 { font-size: clamp(30px, 4vw, 46px); letter-spacing: -.035em; line-height: 1.2; margin: 16px 0; overflow-wrap: anywhere; }
+.project-overview h2 { font-size: 16px; margin: 38px 0 16px; }
+.project-goal { color: var(--muted); line-height: 1.8; max-width: 720px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-overview-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12px; margin-top: 24px; }
+.project-overview-meta > span { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.project-overview-meta select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-soft); color: var(--ink); }
+.project-overview-pages { display: grid; gap: 7px; }
+.project-overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 38px 0 16px; }
+.project-overview-heading h2 { margin: 0; }
+.project-overview-heading > button { display: inline-flex; align-items: center; gap: 7px; flex: none; padding: 9px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-soft); color: var(--ink); font-size: 12px; }
+.project-overview-heading > button:hover { background: var(--notebook-tint); }
+.project-overview-page-row { display: flex; align-items: center; border: 1px solid var(--line); background: var(--surface-soft); border-radius: 7px; min-width: 0; }
+.project-overview-page-row:hover { background: var(--notebook-tint); border-color: var(--field-accent); }
+.project-overview-page-row > button { display: flex; align-items: center; justify-content: flex-start; gap: 10px; padding: 13px 14px; border: 0; background: transparent; color: var(--ink); border-radius: 6px; text-align: left; min-width: 0; }
+.project-overview-page-row > button:first-child { flex: 1; }
+.project-overview-page-row > button:last-child:not(:first-child) { flex: none; padding: 10px; margin-right: 4px; }
+.project-overview-page-row > button:last-child:not(:first-child):hover { background: var(--line); }
+.project-page-label, .project-child-page-label { flex: 1; min-width: 0; overflow-wrap: anywhere; text-align: left; }
+.project-overview-page-row .notebook-page-emoji, .project-overview-page-row svg, .project-child-pages .notebook-page-emoji, .project-child-pages svg { flex: none; }
+.project-overview-page-row .notebook-page-emoji, .project-child-pages .notebook-page-emoji { width: 19px; text-align: center; }
+.project-overview > footer { display: flex; gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 20px; margin-top: 28px; }
+.project-overview > footer button, .project-empty button, .project-archived-row button { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 9px 12px; font-size: 12px; }
+.project-empty { border: 1px dashed var(--line); border-radius: 8px; padding: 27px; color: var(--muted); }
+.project-archived-row { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.project-archived-row > span { flex: 1; overflow-wrap: anywhere; }
+.project-workspace .field-document-tools { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 15px; }
+.project-workspace .field-document-tools > summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 8px 0; }
+.project-tools-embedded.collab-hub { width: 100%; max-width: 1120px; margin: auto; padding: 35px 40px 70px; }
+.project-tools-embedded .collab-project { margin: 0; padding: 0; }
+.project-tools-embedded .collab-card { box-shadow: none; border-radius: 9px; }
+.project-tools-embedded .collab-project > .collab-card { padding: 0; border: 0; background: transparent; }
+.project-tools-embedded .collab-card > h3:first-child { font-size: 22px; margin-bottom: 24px; }
+.project-tools-embedded .collab-task { flex-wrap: wrap; }
+.project-tools-embedded .collab-task > span:nth-child(2) { min-width: 140px; overflow-wrap: anywhere; }
+.project-child-pages { display: grid; gap: 6px; margin-top: 22px; }
+.project-child-pages > small { color: var(--muted); margin-bottom: 5px; }
+.project-child-pages > button { display: flex; align-items: center; justify-content: flex-start; gap: 9px; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 5px; background: var(--surface-soft); color: var(--ink); }
+.project-tools-embedded h2 { font-size: 20px; }
+.project-tools-embedded input, .project-tools-embedded select, .project-tools-embedded textarea { max-width: 100%; }
+.project-tab-picker > input { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--ink); }
+.project-picker-pages { max-height: 45dvh; overflow: auto; margin: 12px 0; }
+.project-picker-pages > button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 12px; border: 0; background: transparent; color: var(--ink); text-align: left; border-radius: 5px; overflow-wrap: anywhere; }
+.project-picker-pages > button:hover { background: var(--notebook-tint); }
+.project-workspace .field-dialog form > p { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.project-workspace .field-dialog input, .project-workspace .field-dialog select { min-width: 0; }
+@media (max-height: 800px) {
+  .project-workspace .field-notebook__sidebar { padding-top: 14px; }
+  .project-workspace .field-sidebar-home { margin-bottom: 12px; }
+  .project-sidebar-identity { margin-bottom: 12px; }
+  .project-utilities nav button { padding-block: 6px; }
+  .project-sidebar-footer > .field-sidebar-link, .project-sidebar-footer > button { padding-block: 5px; }
+}
+@media (max-height: 620px) {
+  .project-workspace .field-notebook__sidebar { overflow-y: auto; }
+  .project-tree-scroll { min-height: 110px; flex: 1 0 110px; }
+}
+@media (max-width: 1050px) {
+  .project-overview { padding: 40px 28px 70px; }
+  .project-tools-embedded.collab-hub { padding: 25px 22px 50px; }
+}
+@media (max-width: 650px) {
+  .project-workspace .field-topbar { flex-wrap: wrap; gap: 6px; padding: 8px 12px; }
+  .project-workspace .field-breadcrumbs { width: calc(100% - 40px); flex: auto; }
+  .project-workspace .field-topbar-actions { width: 100%; justify-content: flex-end; min-width: 0; }
+  .project-overview { padding: 28px 20px 50px; }
+  .project-tools-embedded.collab-hub { padding: 22px 14px 50px; }
+  .project-archived-row { gap: 7px; font-size: 12px; }
+  .project-workspace .field-tree-menu > summary { opacity: 1; }
+}

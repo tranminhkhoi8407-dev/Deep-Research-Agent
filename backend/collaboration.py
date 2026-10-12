@@ -23,12 +23,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pycrdt import Doc, Text, XmlFragment, XmlElement
 
 from backend.accounts import _connect, _database_path, get_user
 from backend.auth import current_user as authenticated_user, collaboration_user as current_user
 from backend.identity import public_name_key, validate_public_name
+from backend.notifications import initialize as initialize_social, is_blocked, block_user, notify, rate_limit
 
 
 router = APIRouter(prefix="/api/collab", tags=["collaboration"])
@@ -224,6 +225,8 @@ def _open_database_unlocked() -> sqlite3.Connection:
     event_columns = {row["name"] for row in conn.execute("PRAGMA table_info(collaboration_events)")}
     if "details_json" not in event_columns:
         conn.execute("ALTER TABLE collaboration_events ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'")
+    initialize_social(conn)
+    conn.commit()
     _SCHEMA_READY.add(database_key)
     return conn
 
@@ -274,8 +277,7 @@ def pair(a: str, b: str) -> str:
 
 
 def not_blocked(conn: sqlite3.Connection, a: str, b: str) -> None:
-    row = conn.execute("SELECT status FROM connections WHERE pair_key = ?", (pair(a, b),)).fetchone()
-    if row and row["status"] == "blocked":
+    if is_blocked(conn, a, b):
         raise HTTPException(403, "This account cannot be invited")
 
 
@@ -357,6 +359,11 @@ class NameInput(BaseModel):
 class GroupInput(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     description: str = Field(default="", max_length=1000)
+
+    @field_validator("name", "description", mode="before")
+    @classmethod
+    def strip_whitespace(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 class ProjectInput(BaseModel):
@@ -465,9 +472,12 @@ def search_people(query: str = "", user: dict = Depends(current_user)):
     if len(query) < 2:
         return {"people": []}
     with db() as conn:
+        rate_limit(conn, user["id"], "search")
         rows = conn.execute(
-            "SELECT id FROM users WHERE public_name_key LIKE ? ESCAPE '\\' AND id != ? AND status = 'active' ORDER BY public_name_key LIMIT 12",
-            ("%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", user["id"]),
+            """SELECT id FROM users WHERE public_name_key LIKE ? ESCAPE '\\' AND id != ? AND status = 'active'
+            AND NOT EXISTS (SELECT 1 FROM user_blocks WHERE (blocker_id=? AND blocked_id=users.id) OR (blocked_id=? AND blocker_id=users.id))
+            ORDER BY public_name_key LIMIT 12""",
+            ("%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", user["id"], user["id"], user["id"]),
         ).fetchall()
         return {"people": [public_user(conn, row["id"]) for row in rows]}
 
@@ -480,51 +490,105 @@ def list_connections(user: dict = Depends(current_user)):
         ).fetchall()
         return {"connections": [
             {"id": row["id"], "status": row["status"], "direction": "outgoing" if row["requester_id"] == user["id"] else "incoming",
-             "person": public_user(conn, row["target_id"] if row["requester_id"] == user["id"] else row["requester_id"]), "updated_at": row["updated_at"]}
-            for row in rows if row["status"] != "blocked" or row["blocked_by"] == user["id"]
+             "person": public_user(conn, row["target_id"] if row["requester_id"] == user["id"] else row["requester_id"]), "created_at": row["created_at"], "updated_at": row["updated_at"]}
+            for row in rows if row["status"] in {"pending", "accepted"} and not is_blocked(conn, row["requester_id"], row["target_id"])
+            and conn.execute("SELECT 1 FROM users WHERE id=? AND status='active'", (row["target_id"] if row["requester_id"] == user["id"] else row["requester_id"],)).fetchone()
         ]}
+
+
+@router.get("/blocks")
+def list_blocks(user: dict = Depends(current_user)):
+    with db() as conn:
+        return {"blocks": [{"person": public_user(conn, row["blocked_id"]), "created_at": row["created_at"]}
+                           for row in conn.execute("SELECT * FROM user_blocks WHERE blocker_id=? ORDER BY created_at DESC", (user["id"],))]}
+
+
+@router.post("/people/{person_id}/block")
+def create_block(person_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        block_user(conn, user["id"], person_id)
+    return {"status": "blocked"}
+
+
+@router.delete("/people/{person_id}/block")
+def delete_block(person_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        # Only delete the authenticated user's own direction. Never disclose the reverse block.
+        conn.execute("DELETE FROM user_blocks WHERE blocker_id=? AND blocked_id=?", (user["id"], person_id))
+    return {"status": "unblocked"}
 
 
 @router.post("/connections", status_code=201)
 def request_connection(payload: NameInput, user: dict = Depends(current_user)):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         require_name(conn, user["id"])
         target = find_person(conn, payload.username, user["id"])
+        not_blocked(conn, user["id"], target["id"])
         key = pair(user["id"], target["id"])
         row = conn.execute("SELECT * FROM connections WHERE pair_key = ?", (key,)).fetchone()
-        if row and row["status"] in {"pending", "accepted", "blocked"}:
-            raise HTTPException(409, "A connection request or relationship already exists")
+        if row and row["status"] in {"pending", "accepted"}:
+            return {"id": row["id"], "status": row["status"], "direction": "outgoing" if row["requester_id"] == user["id"] else "incoming"}
+        if row and row["target_id"] == target["id"] and row["updated_at"] > (datetime.now(timezone.utc) - timedelta(days=1)).isoformat():
+            raise HTTPException(429, "Please wait before sending another request to this person")
+        rate_limit(conn, user["id"], "friend.request", target["id"])
+        sent_at = now()
         if row:
-            conn.execute("UPDATE connections SET requester_id = ?, target_id = ?, status = 'pending', blocked_by = NULL, updated_at = ? WHERE id = ?", (user["id"], target["id"], now(), row["id"]))
+            conn.execute("UPDATE connections SET requester_id = ?, target_id = ?, status = 'pending', blocked_by = NULL, created_at = ?, updated_at = ? WHERE id = ?", (user["id"], target["id"], sent_at, sent_at, row["id"]))
             connection_id = row["id"]
         else:
             connection_id = ident()
-            conn.execute("INSERT INTO connections VALUES (?,?,?,?,?,?,?,?)", (connection_id, key, user["id"], target["id"], "pending", None, now(), now()))
+            conn.execute("INSERT INTO connections VALUES (?,?,?,?,?,?,?,?)", (connection_id, key, user["id"], target["id"], "pending", None, sent_at, sent_at))
+        notify(conn, target["id"], user["id"], "friend.request", connection_id,
+               event_key=f"friend.request:{connection_id}:{sent_at}", created_at=sent_at)
     return {"id": connection_id, "status": "pending"}
 
 
 @router.patch("/connections/{connection_id}")
-def respond_connection(connection_id: str, action: Literal["accept", "decline", "block"], user: dict = Depends(current_user)):
+def respond_connection(connection_id: str, action: Literal["accept", "decline", "block"], user: dict = Depends(current_user), expected_created_at: str | None = None):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM connections WHERE id = ?", (connection_id,)).fetchone()
         if not row or user["id"] not in {row["requester_id"], row["target_id"]}:
             raise HTTPException(404, "Connection not found")
-        if action != "block" and (row["target_id"] != user["id"] or row["status"] != "pending"):
+        if expected_created_at is not None and row["created_at"] != expected_created_at:
+            raise HTTPException(409, "This request has changed; refresh your inbox")
+        if action == "block":
+            block_user(conn, user["id"], row["target_id"] if row["requester_id"] == user["id"] else row["requester_id"])
+            return {"status": "blocked"}
+        other_id = row["target_id"] if row["requester_id"] == user["id"] else row["requester_id"]
+        if not conn.execute("SELECT 1 FROM users WHERE id=? AND status='active'", (other_id,)).fetchone():
+            raise HTTPException(404, "Account unavailable")
+        not_blocked(conn, row["requester_id"], row["target_id"])
+        if row["target_id"] != user["id"] or row["status"] not in {"pending", "accepted" if action == "accept" else "declined"}:
             raise HTTPException(403, "Only the recipient can respond to a pending request")
+        if row["status"] != "pending":
+            return {"status": row["status"]}
         status = {"accept": "accepted", "decline": "declined", "block": "blocked"}[action]
         conn.execute("UPDATE connections SET status = ?, blocked_by = ?, updated_at = ? WHERE id = ?", (status, user["id"] if action == "block" else None, now(), connection_id))
+        conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE recipient_id=? AND kind='friend.request' AND subject_id=?", (now(), user["id"], connection_id))
+        if action == "accept":
+            notify(conn, row["requester_id"], user["id"], "friend.accepted", connection_id,
+                   event_key=f"friend.accepted:{connection_id}:{row['created_at']}")
     return {"status": status}
 
 
 @router.delete("/connections/{connection_id}")
-def remove_connection(connection_id: str, user: dict = Depends(current_user)):
+def remove_connection(connection_id: str, user: dict = Depends(current_user), expected_status: Literal["pending", "accepted"] | None = None, expected_created_at: str | None = None):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM connections WHERE id = ?", (connection_id,)).fetchone()
         if not row or user["id"] not in {row["requester_id"], row["target_id"]}:
             raise HTTPException(404, "Connection not found")
-        if row["status"] == "blocked" and row["blocked_by"] != user["id"]:
-            raise HTTPException(403, "Cannot unblock another person's block")
+        if (expected_status is not None and row["status"] != expected_status) or (expected_created_at is not None and row["created_at"] != expected_created_at):
+            raise HTTPException(409, "The relationship has changed; refresh before removing it")
+        if is_blocked(conn, row["requester_id"], row["target_id"]):
+            raise HTTPException(403, "Use your blocked list to remove your own block")
+        if row["status"] == "pending" and row["requester_id"] != user["id"]:
+            raise HTTPException(403, "Only the sender can cancel a pending request")
         conn.execute("DELETE FROM connections WHERE id = ?", (connection_id,))
+        conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE kind LIKE 'friend.%' AND subject_id=?", (now(), connection_id))
     return {"status": "removed"}
 
 
@@ -657,15 +721,21 @@ def restore_group(group_id: str, user: dict = Depends(current_user)):
 
 
 def invite(conn: sqlite3.Connection, kind: str, target_id: str, recipient_id: str, sender_id: str, role: str) -> dict:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     not_blocked(conn, sender_id, recipient_id)
     previous = conn.execute("SELECT id, status FROM collaboration_invites WHERE kind = ? AND target_id = ? AND recipient_id = ?", (kind, target_id, recipient_id)).fetchone()
     if previous and previous["status"] in {"pending", "accepted"}:
         raise HTTPException(409, "Already invited or already has access")
+    rate_limit(conn, sender_id, "invite", recipient_id)
     invitation_id = previous["id"] if previous else ident()
     if previous:
         conn.execute("UPDATE collaboration_invites SET sender_id = ?, role = ?, status = 'pending', created_at = ?, responded_at = NULL WHERE id = ?", (sender_id, role, now(), invitation_id))
     else:
         conn.execute("INSERT INTO collaboration_invites VALUES (?,?,?,?,? ,?, 'pending', ?, NULL)", (invitation_id, kind, target_id, recipient_id, sender_id, role, now()))
+    sent_at = conn.execute("SELECT created_at FROM collaboration_invites WHERE id=?", (invitation_id,)).fetchone()[0]
+    notify(conn, recipient_id, sender_id, "invite.received", invitation_id, {"kind": kind, "role": role},
+           event_key=f"invite.received:{invitation_id}:{sent_at}", created_at=sent_at)
     return {"id": invitation_id, "kind": kind, "status": "pending"}
 
 
@@ -703,7 +773,7 @@ def list_invites(user: dict = Depends(current_user)):
         rows = conn.execute("SELECT * FROM collaboration_invites WHERE recipient_id = ? AND status = 'pending' ORDER BY created_at DESC", (user["id"],)).fetchall()
         output = []
         for row in rows:
-            if not invitation_authorized(conn, row):
+            if is_blocked(conn, row["sender_id"], user["id"]) or not invitation_authorized(conn, row):
                 continue
             table = {"group": "research_groups", "project": "research_projects", "page": "research_pages"}[row["kind"]]
             title_field = "name" if row["kind"] != "page" else "title"
@@ -727,15 +797,19 @@ def cancel_invite(invitation_id: str, user: dict = Depends(current_user)):
             page = page_detail(conn, row["target_id"], user["id"])
             project_detail(conn, page["project_id"], user["id"], 4)
         conn.execute("DELETE FROM collaboration_invites WHERE id = ?", (invitation_id,))
+        conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE kind LIKE 'invite.%' AND subject_id=?", (now(), invitation_id))
     return {"status": "cancelled"}
 
 
 @router.patch("/invites/{invitation_id}")
-def respond_invite(invitation_id: str, action: Literal["accept", "decline"], user: dict = Depends(current_user)):
+def respond_invite(invitation_id: str, action: Literal["accept", "decline"], user: dict = Depends(current_user), expected_created_at: str | None = None):
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM collaboration_invites WHERE id = ? AND recipient_id = ? AND status = 'pending'", (invitation_id, user["id"])).fetchone()
         if not row:
             raise HTTPException(404, "Invitation not found")
+        if expected_created_at is not None and row["created_at"] != expected_created_at:
+            raise HTTPException(409, "This invitation has changed; refresh your inbox")
         if action == "accept":
             not_blocked(conn, row["sender_id"], user["id"])
             if not invitation_authorized(conn, row):
@@ -758,6 +832,10 @@ def respond_invite(invitation_id: str, action: Literal["accept", "decline"], use
                     raise HTTPException(404, "Page no longer exists")
                 conn.execute("INSERT OR REPLACE INTO page_shares VALUES (?,?,?,?)", (row["target_id"], user["id"], row["role"], now()))
         conn.execute("UPDATE collaboration_invites SET status = ?, responded_at = ? WHERE id = ?", ("accepted" if action == "accept" else "declined", now(), invitation_id))
+        conn.execute("UPDATE notifications SET read_at=COALESCE(read_at,?) WHERE recipient_id=? AND kind='invite.received' AND subject_id=?", (now(), user["id"], invitation_id))
+        if action == "accept":
+            notify(conn, row["sender_id"], user["id"], "invite.accepted", invitation_id,
+                   event_key=f"invite.accepted:{invitation_id}:{row['created_at']}")
     return {"status": "accepted" if action == "accept" else "declined", "kind": row["kind"], "target_id": row["target_id"]}
 
 
@@ -835,8 +913,14 @@ def create_project(payload: ProjectInput, group_id: str | None = None, user: dic
 def get_project(project_id: str, user: dict = Depends(current_user)):
     with db() as conn:
         project = project_detail(conn, project_id, user["id"])
-        pages = conn.execute("SELECT * FROM research_pages WHERE project_id = ? AND archived_at IS NULL ORDER BY position,created_at,id", (project_id,)).fetchall()
-        archived_pages = conn.execute("SELECT id, title, archived_at FROM research_pages WHERE project_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC", (project_id,)).fetchall() if project_access(conn, project, user["id"]) >= 4 else []
+        access = project_access(conn, project, user["id"])
+        pages = conn.execute("SELECT p.*,COALESCE(n.favorite,0) favorite,n.opened_at FROM research_pages p LEFT JOIN notebook_preferences n ON n.page_id=p.id AND n.user_id=? WHERE p.project_id=? AND p.archived_at IS NULL ORDER BY p.position,p.created_at,p.id", (user["id"], project_id)).fetchall()
+        # Compute direct grants in one query, rather than rechecking the entire
+        # project/group permission chain once for every sidebar page.
+        page_grants = {row["page_id"]: ACCESS[row["role"]] for row in conn.execute(
+            "SELECT s.page_id,s.role FROM page_shares s JOIN research_pages p ON p.id=s.page_id WHERE p.project_id=? AND s.user_id=?", (project_id, user["id"]))}
+        field_home = conn.execute("SELECT home_page_id FROM field_workspaces WHERE project_id=?", (project_id,)).fetchone()
+        archived_pages = conn.execute("SELECT id, title, archived_at FROM research_pages WHERE project_id = ? AND archived_at IS NOT NULL ORDER BY archived_at DESC", (project_id,)).fetchall() if access >= 4 else []
         tasks = conn.execute("SELECT * FROM project_tasks WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
         evidence = conn.execute("SELECT * FROM project_evidence WHERE project_id = ? ORDER BY created_at DESC", (project_id,)).fetchall()
         members = conn.execute("SELECT user_id, role FROM project_members WHERE project_id = ?", (project_id,)).fetchall()
@@ -844,11 +928,12 @@ def get_project(project_id: str, user: dict = Depends(current_user)):
         assignable_ids.update(member["user_id"] for member in members)
         if project["group_id"]:
             assignable_ids.update(item["user_id"] for item in conn.execute("SELECT user_id FROM group_members WHERE group_id = ?", (project["group_id"],)))
-        return {"project": project_payload(conn, project, user["id"]), "pages": [dict(page) for page in pages], "archived_pages": [dict(page) for page in archived_pages],
+        return {"project": project_payload(conn, project, user["id"]), "owner": public_user(conn, project["owner_id"]), "home_page_id": field_home["home_page_id"] if field_home else None,
+                "pages": [{**dict(page), "my_access": max(access, page_grants.get(page["id"], 0))} for page in pages], "archived_pages": [dict(page) for page in archived_pages],
                 "tasks": [{**dict(task), "assignee": public_user(conn, task["assignee_id"]) if task["assignee_id"] else None} for task in tasks],
                 "evidence": [dict(item) for item in evidence],
                 "members": [{**public_user(conn, member["user_id"]), "role": member["role"]} for member in members],
-                "pending_invites": pending_invites(conn, "project", project_id) if project_access(conn, project, user["id"]) >= 4 else [],
+                "pending_invites": pending_invites(conn, "project", project_id) if access >= 4 else [],
                 "assignable": [public_user(conn, member_id) for member_id in assignable_ids if project_access(conn, project, member_id) > 0]}
 
 
@@ -1433,7 +1518,9 @@ def get_page(page_id: str, user: dict = Depends(current_user)):
         comments = conn.execute("SELECT * FROM page_comments WHERE page_id = ? ORDER BY created_at", (page_id,)).fetchall()
         versions = conn.execute("SELECT id,label,author_id,created_at FROM page_versions WHERE page_id = ? ORDER BY created_at DESC LIMIT 30", (page_id,)).fetchall()
         shares = conn.execute("SELECT * FROM page_shares WHERE page_id = ?", (page_id,)).fetchall()
-        return {"page": {**dict(page), "my_access": page_access(conn, page, user["id"]), "can_manage": project_access(conn, project, user["id"]) >= 4},
+        preference = conn.execute("SELECT favorite,opened_at FROM notebook_preferences WHERE page_id=? AND user_id=?", (page_id, user["id"])).fetchone()
+        return {"page": {**dict(page), "favorite": bool(preference["favorite"]) if preference else False, "opened_at": preference["opened_at"] if preference else None,
+                         "my_access": page_access(conn, page, user["id"]), "can_manage": project_access(conn, project, user["id"]) >= 4},
                 "last_editor": public_user(conn, page["updated_by"]),
                 "project": {"id": project["id"], "name": project["name"], "field": project["field"], "group_id": project["group_id"], "my_access": project_access(conn, project, user["id"])},
                 "comments": [{**dict(comment), "author": public_user(conn, comment["author_id"])} for comment in comments],
@@ -1644,6 +1731,8 @@ def add_task(project_id: str, payload: TaskInput, user: dict = Depends(current_u
             raise HTTPException(422, "Assignee must have access to the project")
         conn.execute("INSERT INTO project_tasks VALUES (?,?,?,?,?,?,?)", (task_id, project_id, payload.title.strip(), "todo", assignee, user["id"], now()))
         event(conn, project_id, user["id"], "task.created", task_id)
+        if assignee:
+            notify(conn, assignee, user["id"], "task.assigned", task_id, event_key=f"task.assigned:{task_id}")
         return {"task": dict(conn.execute("SELECT * FROM project_tasks WHERE id = ?", (task_id,)).fetchone())}
 
 

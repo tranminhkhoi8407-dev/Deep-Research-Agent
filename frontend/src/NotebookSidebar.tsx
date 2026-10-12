@@ -15,7 +15,7 @@ export function useNotebookSidebar(userId: string) {
 }
 export type SidebarControls = ReturnType<typeof useNotebookSidebar>;
 
-export function NotebookSidebarEdge({ controls, language }: { controls: SidebarControls; language: Language }) {
+export function NotebookSidebarEdge({ controls, language, sidebarId = 'field-sidebar' }: { controls: SidebarControls; language: Language; sidebarId?: string }) {
   const vi = language === 'vi', [dragging, setDragging] = useState(false);
   const drag = useRef<{ pointer: number; x: number; width: number; moved: boolean } | null>(null);
   const start = (event: PointerEvent<HTMLDivElement>) => {
@@ -29,7 +29,7 @@ export function NotebookSidebarEdge({ controls, language }: { controls: SidebarC
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (!cancelled && !current.moved) controls.setCollapsed(true);
   };
-  return <div className={`notebook-sidebar-edge ${dragging ? 'is-dragging' : ''}`} role="separator" aria-orientation="vertical" aria-label={vi ? 'Thay đổi chiều rộng sidebar' : 'Resize sidebar'} aria-controls="field-sidebar" aria-valuemin={SIDEBAR_MIN} aria-valuemax={controls.maxWidth} aria-valuenow={controls.width} tabIndex={controls.collapsed ? -1 : 0}
+  return <div className={`notebook-sidebar-edge ${dragging ? 'is-dragging' : ''}`} role="separator" aria-orientation="vertical" aria-label={vi ? 'Thay đổi chiều rộng sidebar' : 'Resize sidebar'} aria-controls={sidebarId} aria-valuemin={SIDEBAR_MIN} aria-valuemax={controls.maxWidth} aria-valuenow={controls.width} tabIndex={controls.collapsed ? -1 : 0}
     onPointerDown={start} onPointerMove={event => {
       const current = drag.current; if (!current || event.pointerId !== current.pointer) return;
       if (Math.abs(event.clientX - current.x) > 4) current.moved = true;

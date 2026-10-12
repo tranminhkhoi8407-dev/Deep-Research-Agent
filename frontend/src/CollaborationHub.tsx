@@ -3,7 +3,9 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -34,7 +36,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import type { AuthUser } from "./Auth";
+import type { Appearance, AuthUser } from "./Auth";
 import type { Language, StoredReportSummary } from "./ProductViews";
 import { researchTemplate } from "./ResearchTemplates";
 import { NotebookTree, NotebookSearch, NotebookSources, NotebookBrief, useNotebookConfirm, type NotebookReferences } from "./NotebookTools";
@@ -42,6 +44,12 @@ import type { NotebookPageAction, NotebookPageInfo } from './NotebookPageIcon';
 import type { NotebookBlock, NotebookOperation, SubpageConversion } from "./LiveResearchEditor";
 import type { DomainResearchPayload } from "./DomainHub";
 import "./CollaborationHub.css";
+import { FriendsPanel } from './FriendsPanel';
+import { socialChanged } from './social';
+import { ProjectWorkspace } from './ProjectWorkspace';
+import { projectWorkspaceRoute, type ProjectPane } from './projectNavigation';
+import { NotebookPageIcon } from './NotebookPageIcon';
+import { NotebookApiError } from './notebookApi';
 
 const LiveEditor = lazy(() => import("./LiveResearchEditor"));
 
@@ -58,7 +66,7 @@ export type Person = {
   avatar_url: string | null;
 };
 type PendingInvite = { id: string; role: string; recipient: Person };
-type Group = {
+export type Group = {
   id: string;
   name: string;
   description: string;
@@ -66,7 +74,7 @@ type Group = {
   members: (Person & { role: string })[];
   pending_invites: PendingInvite[];
 };
-type Project = {
+export type Project = {
   id: string;
   name: string;
   description: string;
@@ -78,14 +86,21 @@ type Project = {
   my_access: number;
   updated_at: string;
 };
-type Page = {
+export type ProjectPage = {
   id: string;
   project_id: string;
   parent_id: string | null;
   title: string;
   my_access?: number;
   updated_at: string;
+  position?: number;
+  icon?: string;
+  cover?: string;
+  full_width?: boolean;
+  favorite?: boolean;
+  opened_at?: string | null;
 };
+type Page = ProjectPage;
 type SharedPage = Page & {
   project_name: string;
   field: FieldId;
@@ -98,12 +113,14 @@ type Invitation = {
   target_title: string;
   role: string;
   sender: Person;
+  created_at: string;
 };
 type Connection = {
   id: string;
   status: string;
   direction: "incoming" | "outgoing";
   person: Person;
+  created_at: string;
 };
 type Task = {
   id: string;
@@ -125,8 +142,9 @@ type Version = {
   created_at: string;
   author: Person;
 };
-type ProjectDetail = {
+export type ProjectDetail = {
   project: Project;
+  owner?: Person;
   pages: Page[];
   archived_pages: { id: string; title: string; archived_at: string }[];
   tasks: Task[];
@@ -134,9 +152,10 @@ type ProjectDetail = {
   members: (Person & { role: string })[];
   assignable: Person[];
   pending_invites: PendingInvite[];
+  home_page_id?: string | null;
 };
 type ArchivedGroup = { id: string; name: string; archived_at: string };
-type PageDetail = {
+export type PageDetail = {
   page: Page & { my_access: number; can_manage: boolean };
   project: {
     id: string;
@@ -183,7 +202,7 @@ async function api<T>(
     } catch {
       /* Keep fallback. */
     }
-    throw new Error(detail);
+    throw new NotebookApiError(response.status, detail);
   }
   return response.json() as Promise<T>;
 }
@@ -265,6 +284,63 @@ function PendingInvitations({
   );
 }
 
+function CreateGroupForm({ apiBase, language, onCreated }: {
+  apiBase: string;
+  language: Language;
+  onCreated: (group: Group) => void;
+}) {
+  const vi = language === 'vi';
+  const hintId = useId();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submitting = useRef(false);
+  const validName = name.trim().length >= 2 && name.trim().length <= 80;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (submitting.current) return;
+    if (!validName) {
+      setError(vi ? 'Nhập tên nhóm từ 2 đến 80 ký tự, không chỉ có khoảng trắng.' : 'Enter a group name with 2–80 characters, not just spaces.');
+      return;
+    }
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    let group: Group;
+    try {
+      const result = await api<{ group: Group }>(apiBase, '/groups', {
+        method: 'POST', body: JSON.stringify({ name: name.trim(), description: description.trim() }),
+      });
+      group = result.group;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return;
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+    // Creation has succeeded; a later list refresh must not ask the user to create it again.
+    setName('');
+    setDescription('');
+    onCreated(group);
+  };
+  return <form className="collab-form collab-create-group" onSubmit={event => void submit(event)} aria-label={vi ? 'Tạo nhóm mới' : 'Create a new group'}>
+    <label>{vi ? 'Tên nhóm mới (bắt buộc)' : 'New group name (required)'}
+      <input value={name} onChange={event => { setName(event.target.value); setError(''); }} placeholder={vi ? 'Ví dụ: AI Lab' : 'E.g. AI Lab'} required minLength={2} maxLength={80} disabled={busy} aria-describedby={hintId} />
+    </label>
+    <p id={hintId} className="collab-form-help">
+      {vi ? 'Tên nhóm cần ít nhất 2 ký tự. Bạn có thể tạo nhóm một mình, rồi mời thêm người; không cần có sẵn 2 thành viên.' : 'Use at least 2 characters. You can create a group on your own, then invite people; two existing members are not required.'}
+    </p>
+    <label>{vi ? 'Mô tả (tùy chọn)' : 'Description (optional)'}
+      <textarea value={description} onChange={event => setDescription(event.target.value)} placeholder={vi ? 'Nhóm đang nghiên cứu điều gì?' : 'What does this group study?'} maxLength={1000} disabled={busy} />
+    </label>
+    <p className="collab-muted"><ShieldCheck size={15} />{vi ? 'Nhóm kín mặc định. Người được mời chỉ tham gia sau khi chấp nhận.' : 'Private by default. Invited people join only after accepting.'}</p>
+    {error && <p className="collab-inline-error" role="alert">{error}</p>}
+    <button type="submit" disabled={busy || !validName}>{busy ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}{busy ? vi ? 'Đang tạo nhóm…' : 'Creating group…' : vi ? 'Tạo nhóm mới' : 'Create new group'}</button>
+  </form>;
+}
+
 function downloadText(filename: string, content: string) {
   const url = URL.createObjectURL(
     new Blob([content], { type: filename.endsWith(".json") ? "application/json;charset=utf-8" : "text/markdown;charset=utf-8" }),
@@ -274,6 +350,28 @@ function downloadText(filename: string, content: string) {
   link.download = filename;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export type PageWorkspace = {
+  header: ReactNode;
+  onCreateChild?: () => void;
+  onCreateChildUnder?: (pageId: string) => void;
+  onConvertToPage?: (payload: SubpageConversion) => Promise<{ id: string; title: string }>;
+  onChanged: () => void;
+  onSync: (synced: boolean) => void;
+  onTitleDirty?: (dirty: boolean) => void;
+  onDetails?: (detail: PageDetail) => void;
+  onUnavailable?: () => void;
+  pages: NotebookPageInfo[];
+  pageHref: (id: string) => string;
+  onPageAction?: (id: string, action: NotebookPageAction) => void;
+  hideSharingPanel?: boolean;
+  showTools?: boolean;
+  showChildPages?: boolean;
+  metadata?: Pick<PageDetail['page'], 'title' | 'updated_at' | 'my_access'>;
+};
+function canEditTitle(detail: PageDetail | null, title: string) {
+  return !!detail && detail.page.my_access >= 3 && title !== detail.page.title;
 }
 
 export function PageView({
@@ -295,17 +393,7 @@ export function PageView({
   onBack: (projectId?: string) => void;
   onOpen: (pageId: string) => void;
   onPrepareResearch: (payload: DomainResearchPayload) => void;
-  workspace?: {
-    header: ReactNode;
-    onCreateChild: () => void;
-    onCreateChildUnder: (pageId: string) => void;
-    onConvertToPage: (payload: SubpageConversion) => Promise<{ id: string; title: string }>;
-    onChanged: () => void;
-    onSync: (synced: boolean) => void;
-    pages: NotebookPageInfo[];
-    pageHref: (id: string) => string;
-    onPageAction: (id: string, action: NotebookPageAction) => void;
-  };
+  workspace?: PageWorkspace;
 }) {
   const [detail, setDetail] = useState<PageDetail | null>(null);
   const [body, setBody] = useState("");
@@ -314,6 +402,15 @@ export function PageView({
   const [synced, setSynced] = useState(false);
   const [showSide, setShowSide] = useState(!workspace);
   const [title, setTitle] = useState("");
+  const titleState = useRef({ title, saved: detail?.page.title }); titleState.current = { title, saved: detail?.page.title };
+  const workspaceRef = useRef(workspace); workspaceRef.current = workspace;
+  useEffect(() => {
+    const metadata = workspaceRef.current?.metadata;
+    if (!metadata || !detail) return;
+    if (titleState.current.title === titleState.current.saved) setTitle(metadata.title);
+    setDetail(previous => previous && (previous.page.title !== metadata.title || previous.page.updated_at !== metadata.updated_at || previous.page.my_access !== metadata.my_access)
+      ? { ...previous, page: { ...previous.page, ...metadata } } : previous);
+  }, [workspace?.metadata?.title, workspace?.metadata?.updated_at, workspace?.metadata?.my_access]);
   const [comment, setComment] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteRole, setInviteRole] = useState<
@@ -335,11 +432,16 @@ export function PageView({
   const refresh = useCallback(async () => {
     const result = await api<PageDetail>(apiBase, `/pages/${pageId}`);
     setDetail(result);
-    setTitle(result.page.title);
+    if (titleState.current.saved === undefined || titleState.current.title === titleState.current.saved) setTitle(result.page.title);
     await refreshReferences();
   }, [apiBase, pageId, refreshReferences]);
+  useEffect(() => { if (detail) workspace?.onDetails?.(detail); }, [detail]);
+  useEffect(() => { workspace?.onTitleDirty?.(canEditTitle(detail, title)); }, [detail?.page.title, title]);
   useEffect(() => {
-    void refresh().catch((reason: Error) => setError(reason.message));
+    void refresh().catch((reason: Error) => {
+      setError(reason.message);
+      if (reason instanceof NotebookApiError && [401, 403, 404].includes(reason.status)) { setDetail(null); workspaceRef.current?.onUnavailable?.(); }
+    });
   }, [refresh]);
   useEffect(() => {
     if (workspace) return; // Field chrome records its own active-page visit; side peeks are previews.
@@ -355,8 +457,14 @@ export function PageView({
     const timer = setInterval(() => {
       if (document.visibilityState === "visible")
         void api<PageDetail>(apiBase, `/pages/${pageId}`)
-          .then(async result => { setDetail(result); await refreshReferences(); })
-          .catch((reason: Error) => setError(reason.message));
+          .then(async result => {
+            if (titleState.current.title === titleState.current.saved) setTitle(result.page.title);
+            setDetail(result); await refreshReferences();
+          })
+          .catch((reason: Error) => {
+            setError(reason.message);
+            if (reason instanceof NotebookApiError && [401, 403, 404].includes(reason.status)) { setDetail(null); workspaceRef.current?.onUnavailable?.(); }
+          });
     }, 8_000);
     return () => clearInterval(timer);
   }, [apiBase, pageId, refreshReferences]);
@@ -379,6 +487,7 @@ export function PageView({
         method: "PATCH",
         body: JSON.stringify({ title: title.trim() }),
       });
+      setTitle(title.trim()); titleState.current = { title: title.trim(), saved: title.trim() };
       await refresh();
       workspace?.onChanged();
     });
@@ -588,7 +697,7 @@ export function PageView({
                 : "View only"}
         </span>
       </div>
-      {workspace && <button className="field-inspector-toggle" type="button" aria-expanded={showSide} onClick={() => setShowSide(value => !value)}><BookOpen size={15} />{language === 'vi' ? 'Nguồn · Chia sẻ · Phiên bản' : 'Sources · Share · History'}<ChevronDown size={15} /></button>}
+      {workspace && <button className="field-inspector-toggle" type="button" aria-expanded={showSide} onClick={() => setShowSide(value => !value)}><BookOpen size={15} />{workspace.hideSharingPanel ? language === 'vi' ? 'Nguồn · Thảo luận · Phiên bản' : 'Sources · Discuss · History' : language === 'vi' ? 'Nguồn · Chia sẻ · Phiên bản' : 'Sources · Share · History'}<ChevronDown size={15} /></button>}
       <div className={`collab-page__grid ${references.pages.length && !workspace ? "has-notebook-tree" : ""}`}>
         {references.pages.length > 0 && !workspace && <NotebookTree apiBase={apiBase} language={language} projectId={detail.project.id} pageId={pageId} pages={references.pages} canEdit={detail.project.my_access >= 3} onOpen={onOpen} onChanged={refreshReferences} />}
         <article className="collab-card collab-page__main" data-tour={workspace ? 'field-writing' : undefined}>
@@ -643,7 +752,11 @@ export function PageView({
               operation={operation}
             />
           </Suspense>
-          {!workspace && <details className="field-document-tools" open>
+          {workspace?.showChildPages && workspace.pages.some(item => item.parent_id === pageId) && <nav className="project-child-pages" aria-label={language === 'vi' ? 'Trang con' : 'Subpages'}>
+            <small>{language === 'vi' ? 'Trang con trong dự án' : 'Subpages in this project'}</small>
+            {workspace.pages.filter(item => item.parent_id === pageId).map(item => <button type="button" key={item.id} onClick={() => onOpen(item.id)}><NotebookPageIcon icon={item.icon} size={17} /><span className="project-child-page-label">{item.title}</span><ArrowRight size={15} /></button>)}
+          </nav>}
+          {(!workspace || workspace.showTools) && <details className="field-document-tools" open={!workspace}>
           <summary>{language === 'vi' ? 'Công cụ nghiên cứu · Mẫu · Nhập / Xuất' : 'Research tools · Templates · Import / Export'}</summary>
           <div className="collab-page__actions">
             <button type="button" disabled={!synced || !blocks.length} title={blocks.length ? "Export full block structure" : "Convert to blocks first; Markdown export remains available"} onClick={() => downloadText(`${title || "research-page"}.json`, JSON.stringify({ format: "nexora-notebook", version: 1, title, field: detail.project.field, exported_at: new Date().toISOString(), markdown: body, blocks, evidence: references.evidence.filter(item => body.includes(item.url)) }, null, 2))}><Download size={15} />JSON</button>
@@ -780,7 +893,7 @@ export function PageView({
                   MessageCircle,
                   language === "vi" ? "Thảo luận" : "Discuss",
                 ],
-                ["sharing", UserPlus, language === "vi" ? "Chia sẻ" : "Share"],
+                ...(!workspace?.hideSharingPanel ? [["sharing", UserPlus, language === "vi" ? "Chia sẻ" : "Share"] as const] : []),
                 [
                   "history",
                   History,
@@ -1052,12 +1165,16 @@ function GroupManagement({
   const [transferName, setTransferName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [confirmGroup, groupConfirmation] = useNotebookConfirm(language);
+  const running = useRef(false);
   useEffect(() => {
     setName(group.name);
     setDescription(group.description);
     setTransferName("");
   }, [group.id, group.name, group.description]);
   const run = async (work: () => Promise<void>) => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
     setError("");
     try {
@@ -1065,12 +1182,14 @@ function GroupManagement({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      running.current = false;
       setBusy(false);
     }
   };
   const role = group.my_role;
   return (
     <div className="collab-management">
+      {groupConfirmation}
       {role !== "member" && (
         <form
           className="collab-form"
@@ -1150,25 +1269,23 @@ function GroupManagement({
               (role === "admin" && member.role === "member")) && (
               <button
                 type="button"
+                className="collab-icon-action"
                 disabled={busy}
                 title={isVi ? "Xóa khỏi nhóm" : "Remove from group"}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      isVi
-                        ? `Xóa ${member.display_name} khỏi nhóm và thu hồi quyền của họ trong các dự án nhóm?`
-                        : `Remove ${member.display_name} and revoke their group project access?`,
-                    )
-                  )
-                    void run(async () => {
-                      await api(
-                        apiBase,
-                        `/groups/${group.id}/members/${member.id}`,
-                        { method: "DELETE" },
-                      );
-                      await onChanged();
-                    });
-                }}
+                onClick={() => void run(async () => {
+                  if (!await confirmGroup(
+                    isVi
+                      ? `Xóa ${member.display_name} khỏi nhóm và thu hồi quyền của họ trong các dự án nhóm?`
+                      : `Remove ${member.display_name} and revoke their group project access?`,
+                    { title: isVi ? 'Xóa thành viên khỏi nhóm' : 'Remove group member', confirmLabel: isVi ? 'Xóa thành viên' : 'Remove member', destructive: true },
+                  )) return;
+                  await api(
+                    apiBase,
+                    `/groups/${group.id}/members/${member.id}`,
+                    { method: "DELETE" },
+                  );
+                  await onChanged();
+                })}
               >
                 <Trash2 size={15} />
               </button>
@@ -1186,6 +1303,7 @@ function GroupManagement({
           <div className="collab-inline-form">
             <select
               value={transferName}
+              disabled={busy}
               onChange={(event) => setTransferName(event.target.value)}
             >
               <option value="">
@@ -1202,22 +1320,19 @@ function GroupManagement({
             <button
               type="button"
               disabled={!transferName || busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    isVi
-                      ? "Chuyển quyền sở hữu nhóm cho thành viên này?"
-                      : "Transfer group ownership to this member?",
-                  )
-                )
-                  void run(async () => {
-                    await api(apiBase, `/groups/${group.id}/transfer`, {
-                      method: "POST",
-                      body: JSON.stringify({ username: transferName }),
-                    });
-                    await onChanged();
-                  });
-              }}
+              onClick={() => void run(async () => {
+                if (!await confirmGroup(
+                  isVi
+                    ? `Chuyển quyền sở hữu nhóm “${group.name}” cho ${transferName}? Bạn sẽ trở thành quản trị viên, không còn quyền lưu trữ nhóm.`
+                    : `Transfer ownership of “${group.name}” to ${transferName}? You will become an admin and can no longer archive this group.`,
+                  { title: isVi ? 'Chuyển quyền sở hữu' : 'Transfer ownership', confirmLabel: isVi ? 'Chuyển quyền' : 'Transfer ownership' },
+                )) return;
+                await api(apiBase, `/groups/${group.id}/transfer`, {
+                  method: "POST",
+                  body: JSON.stringify({ username: transferName }),
+                });
+                await onChanged();
+              })}
             >
               {isVi ? "Chuyển quyền" : "Transfer"}
             </button>
@@ -1229,21 +1344,18 @@ function GroupManagement({
           type="button"
           className="collab-secondary-button"
           disabled={busy}
-          onClick={() => {
-            if (
-              window.confirm(
-                isVi
-                  ? "Lưu trữ nhóm? Mọi dự án và trang của nhóm sẽ tạm thời không truy cập được."
-                  : "Archive group? All group projects and pages will become unavailable until restored.",
-              )
-            )
-              void run(async () => {
-                await api(apiBase, `/groups/${group.id}/archive`, {
-                  method: "POST",
-                });
-                await onChanged(true);
-              });
-          }}
+          onClick={() => void run(async () => {
+            if (!await confirmGroup(
+              isVi
+                ? `Lưu trữ nhóm “${group.name}”? Mọi dự án và trang thuộc nhóm sẽ tạm ngừng truy cập cho thành viên và người được chia sẻ. Dữ liệu không bị xóa; chủ nhóm có thể khôi phục ở “Nhóm đã lưu trữ”.`
+                : `Archive “${group.name}”? All projects and pages in this group will become unavailable to members and shared-page guests. Data is not deleted; the owner can restore the group from “Archived groups”.`,
+              { title: isVi ? 'Lưu trữ nhóm' : 'Archive group', confirmLabel: isVi ? 'Lưu trữ' : 'Archive', destructive: true },
+            )) return;
+            await api(apiBase, `/groups/${group.id}/archive`, {
+              method: "POST",
+            });
+            await onChanged(true);
+          })}
         >
           {isVi ? "Lưu trữ nhóm" : "Archive group"}
         </button>
@@ -1252,21 +1364,18 @@ function GroupManagement({
           type="button"
           className="collab-secondary-button"
           disabled={busy}
-          onClick={() => {
-            if (
-              window.confirm(
-                isVi
-                  ? "Rời nhóm? Quyền dự án và trang trong nhóm sẽ bị thu hồi."
-                  : "Leave group? Your group project and page access will be revoked.",
-              )
-            )
-              void run(async () => {
-                await api(apiBase, `/groups/${group.id}/members/${userId}`, {
-                  method: "DELETE",
-                });
-                await onChanged(true);
-              });
-          }}
+          onClick={() => void run(async () => {
+            if (!await confirmGroup(
+              isVi
+                ? `Rời nhóm “${group.name}”? Quyền dự án và trang trong nhóm sẽ bị thu hồi. Bạn cần được mời lại nếu muốn tham gia trở lại.`
+                : `Leave “${group.name}”? Your group project and page access will be revoked. You will need a new invitation to rejoin.`,
+              { title: isVi ? 'Rời nhóm' : 'Leave group', confirmLabel: isVi ? 'Rời nhóm' : 'Leave group', destructive: true },
+            )) return;
+            await api(apiBase, `/groups/${group.id}/members/${userId}`, {
+              method: "DELETE",
+            });
+            await onChanged(true);
+          })}
         >
           {isVi ? "Rời nhóm" : "Leave group"}
         </button>
@@ -1435,6 +1544,7 @@ function ProjectSettings({
             value={name}
             onChange={(event) => setName(event.target.value)}
             maxLength={100}
+            aria-label={language === 'vi' ? 'Tên dự án' : 'Project name'}
           />
         </label>
         <label>
@@ -1443,6 +1553,7 @@ function ProjectSettings({
             value={description}
             onChange={(event) => setDescription(event.target.value)}
             maxLength={2000}
+            aria-label={language === 'vi' ? 'Mục tiêu và mô tả' : 'Goal and description'}
           />
         </label>
         <button type="submit" disabled={busy || name.trim().length < 2}>
@@ -1621,15 +1732,7 @@ function PageOrganizer({
   );
 }
 
-export function CollaborationHub({
-  apiBase,
-  language,
-  user,
-  reports,
-  initialField,
-  onEditProfile,
-  onPrepareResearch,
-}: {
+export type CollaborationProps = {
   apiBase: string;
   language: Language;
   user: AuthUser;
@@ -1637,8 +1740,39 @@ export function CollaborationHub({
   initialField?: FieldId | null;
   onEditProfile: () => void;
   onPrepareResearch: (payload: DomainResearchPayload) => void;
+  appearance?: Appearance;
+  onAppearanceChange?: (value: Appearance) => void;
+  onLanguageChange?: (value: Language) => void;
+  onLogout?: () => void;
+};
+
+export function CollaborationHub(props: CollaborationProps) {
+  const [hash, setHash] = useState(window.location.hash);
+  useEffect(() => {
+    const sync = () => setHash(window.location.hash);
+    window.addEventListener('hashchange', sync); window.addEventListener('popstate', sync);
+    return () => { window.removeEventListener('hashchange', sync); window.removeEventListener('popstate', sync); };
+  }, []);
+  const route = projectWorkspaceRoute(hash);
+  if (route && props.user.public_name) return <ProjectWorkspace {...props} route={route} routeHash={hash}
+    renderPage={(pageId, workspace, onOpen, onBack) => <PageView key={pageId} {...props} pageId={pageId} workspace={workspace} onOpen={onOpen} onBack={onBack} />}
+    renderTools={(detail, pane, onChanged) => <CollaborationDashboard key={detail.project.id} {...props} embedded={{ detail, pane, onChanged }} />} />;
+  return <CollaborationDashboard {...props} />;
+}
+
+function CollaborationDashboard({
+  apiBase,
+  language,
+  user,
+  reports,
+  initialField,
+  onEditProfile,
+  onPrepareResearch,
+  embedded,
+}: CollaborationProps & {
+  embedded?: { detail: ProjectDetail; pane: Exclude<ProjectPane, 'overview' | 'pages' | 'archived'>; onChanged: (detail: ProjectDetail) => void };
 }) {
-  const [tab, setTab] = useState<Tab>("projects");
+  const [tab, setTab] = useState<Tab>(() => window.location.hash === '#/collab/people' ? 'people' : window.location.hash.startsWith('#/collab/group/') ? 'groups' : 'projects');
   const [groups, setGroups] = useState<Group[]>([]);
   const [archivedGroups, setArchivedGroups] = useState<ArchivedGroup[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -1647,19 +1781,17 @@ export function CollaborationHub({
   const [invites, setInvites] = useState<Invitation[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     () =>
-      window.location.hash.match(/^#\/collab\/project\/([a-f0-9]+)/)?.[1] ||
+      embedded?.detail.project.id || window.location.hash.match(/^#\/collab\/project\/([a-f0-9]+)/)?.[1] ||
       null,
   );
-  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(() => window.location.hash.match(/^#\/collab\/group\/([a-f0-9]+)/)?.[1] || null);
   const [selectedPageId, setSelectedPageId] = useState<string | null>(
     () =>
-      window.location.hash.match(/^#\/collab\/page\/([a-f0-9]+)/)?.[1] || null,
+      embedded ? null : window.location.hash.match(/^#\/collab\/page\/([a-f0-9]+)/)?.[1] || null,
   );
   const [projectDetail, setProjectDetail] = useState<ProjectDetail | null>(
-    null,
+    embedded?.detail || null,
   );
-  const [groupName, setGroupName] = useState("");
-  const [groupDescription, setGroupDescription] = useState("");
   const [groupInviteName, setGroupInviteName] = useState("");
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -1686,18 +1818,19 @@ export function CollaborationHub({
   const [evidenceUrl, setEvidenceUrl] = useState("");
   const [evidenceDoi, setEvidenceDoi] = useState("");
   const [evidenceNote, setEvidenceNote] = useState("");
-  const [search, setSearch] = useState("");
-  const [people, setPeople] = useState<Person[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [projectPane, setProjectPane] = useState<
+  const [storedProjectPane, setProjectPane] = useState<
     "pages" | "tasks" | "evidence" | "members" | "activity" | "settings"
   >("pages");
+  const projectPane = embedded?.pane || storedProjectPane;
   const isVi = language === "vi";
+  useEffect(() => { if (embedded) setProjectDetail(embedded.detail); }, [embedded?.detail]);
 
   const refresh = useCallback(async () => {
+    if (embedded) return;
     const [
       groupResult,
       archivedResult,
@@ -1719,13 +1852,14 @@ export function CollaborationHub({
     setConnections(connectionResult.connections);
     setInvites(inviteResult.invites);
     setSharedPages(sharedResult.pages);
-  }, [apiBase]);
+  }, [apiBase, !!embedded]);
   const refreshProject = useCallback(
     async (id: string) => {
       const result = await api<ProjectDetail>(apiBase, `/projects/${id}`);
       setProjectDetail(result);
+      embedded?.onChanged(result);
     },
-    [apiBase],
+    [apiBase, embedded?.onChanged],
   );
 
   useEffect(() => {
@@ -1734,7 +1868,7 @@ export function CollaborationHub({
       .finally(() => setLoading(false));
   }, [refresh]);
   useEffect(() => {
-    if (selectedProjectId)
+    if (selectedProjectId && !embedded)
       void refreshProject(selectedProjectId).catch((reason: Error) =>
         setError(reason.message),
       );
@@ -1748,25 +1882,17 @@ export function CollaborationHub({
       if (document.visibilityState === "visible")
         void refresh().catch((reason: Error) => setError(reason.message));
     }, 20_000);
-    return () => clearInterval(timer);
+    const syncSocial = () => { void refresh().catch((reason: Error) => setError(reason.message)); };
+    window.addEventListener('nexora:social-changed', syncSocial);
+    return () => { clearInterval(timer); window.removeEventListener('nexora:social-changed', syncSocial); };
   }, [refresh]);
   useEffect(() => {
-    if (search.trim().length < 2) {
-      setPeople([]);
-      return;
-    }
-    const timer = setTimeout(() => {
-      void api<{ people: Person[] }>(
-        apiBase,
-        `/people?query=${encodeURIComponent(search.trim())}`,
-      )
-        .then((result) => setPeople(result.people))
-        .catch((reason: Error) => setError(reason.message));
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [apiBase, search]);
-  useEffect(() => {
+    if (embedded) return;
     const sync = () => {
+      if (window.location.hash === '#/collab/people') setTab('people');
+      const groupId = window.location.hash.match(/^#\/collab\/group\/([a-f0-9]+)/)?.[1] || null;
+      setSelectedGroupId(groupId);
+      if (groupId) setTab('groups');
       const pageId =
         window.location.hash.match(/^#\/collab\/page\/([a-f0-9]+)/)?.[1] ||
         null;
@@ -1775,6 +1901,7 @@ export function CollaborationHub({
         null;
       setSelectedPageId(pageId);
       setSelectedProjectId(projectId);
+      if (projectId) setTab('projects');
       if (!projectId) setProjectDetail(null);
     };
     window.addEventListener("popstate", sync);
@@ -1791,6 +1918,7 @@ export function CollaborationHub({
     setSuccess("");
     try {
       await work();
+      socialChanged();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -1802,12 +1930,12 @@ export function CollaborationHub({
     setSelectedProjectId(id);
     setSelectedPageId(null);
     setProjectPane("pages");
-    window.history.pushState({}, "", `#/collab/project/${id}`);
+    window.location.hash = `#/collab/project/${id}`;
     window.scrollTo(0, 0);
   };
   const openPage = (id: string) => {
     setSelectedPageId(id);
-    window.history.pushState({}, "", `#/collab/page/${id}`);
+    window.location.hash = `#/collab/page/${id}`;
     window.scrollTo(0, 0);
   };
   const backToProject = (projectId?: string) => {
@@ -1817,36 +1945,25 @@ export function CollaborationHub({
     }
     setSelectedPageId(null);
     if (selectedProjectId) void refreshProject(selectedProjectId);
-    window.history.pushState(
-      {},
-      "",
-      selectedProjectId ? `#/collab/project/${selectedProjectId}` : "#/collab",
-    );
+    window.location.hash = selectedProjectId ? `#/collab/project/${selectedProjectId}` : '#/collab';
   };
   const backToHub = () => {
     setSelectedProjectId(null);
     setProjectDetail(null);
     setSelectedGroupId(null);
-    window.history.pushState({}, "", "#/collab");
+    window.location.hash = '#/collab';
   };
 
-  const createGroup = (event: FormEvent) => {
-    event.preventDefault();
-    if (!groupName.trim()) return;
-    void act(async () => {
-      const result = await api<{ group: Group }>(apiBase, "/groups", {
-        method: "POST",
-        body: JSON.stringify({
-          name: groupName.trim(),
-          description: groupDescription.trim(),
-        }),
-      });
-      setGroupName("");
-      setGroupDescription("");
-      await refresh();
-      setSelectedGroupId(result.group.id);
-      setTab("groups");
-    });
+  const groupCreated = (group: Group) => {
+    setGroups(previous => [group, ...previous.filter(item => item.id !== group.id)]);
+    setSelectedGroupId(group.id);
+    setGroupInviteName('');
+    setTab('groups');
+    setError('');
+    setSuccess(isVi ? `Đã tạo nhóm “${group.name}”. Bạn có thể mời thành viên bên dưới.` : `Created “${group.name}”. You can invite members below.`);
+    window.location.hash = `#/collab/group/${group.id}`;
+    socialChanged();
+    void refresh().catch(() => setError(isVi ? 'Nhóm đã được tạo, nhưng chưa tải lại được danh sách. Không cần tạo lại; hãy tải lại trang để đồng bộ.' : 'The group was created, but the list could not refresh. Do not create it again; reload to sync.'));
   };
   const inviteGroup = (event: FormEvent) => {
     event.preventDefault();
@@ -1985,7 +2102,7 @@ export function CollaborationHub({
   };
   const respondInvite = (item: Invitation, action: "accept" | "decline") => {
     void act(async () => {
-      await api(apiBase, `/invites/${item.id}?action=${action}`, {
+      await api(apiBase, `/invites/${item.id}?action=${action}&expected_created_at=${encodeURIComponent(item.created_at)}`, {
         method: "PATCH",
       });
       await refresh();
@@ -2004,21 +2121,10 @@ export function CollaborationHub({
     action: "accept" | "decline" | "block",
   ) => {
     void act(async () => {
-      await api(apiBase, `/connections/${item.id}?action=${action}`, {
+      await api(apiBase, `/connections/${item.id}?action=${action}&expected_created_at=${encodeURIComponent(item.created_at)}`, {
         method: "PATCH",
       });
       await refresh();
-    });
-  };
-  const requestConnection = (person: Person) => {
-    if (!person.public_name) return;
-    void act(async () => {
-      await api(apiBase, "/connections", {
-        method: "POST",
-        body: JSON.stringify({ username: person.public_name }),
-      });
-      await refresh();
-      setSuccess(isVi ? "Đã gửi lời mời kết nối." : "Connection request sent.");
     });
   };
   const selectedGroup = groups.find((group) => group.id === selectedGroupId);
@@ -2080,8 +2186,8 @@ export function CollaborationHub({
     );
 
   return (
-    <div className="collab-hub">
-      <section className="collab-hero">
+    <div className={`collab-hub${embedded ? ' project-tools-embedded' : ''}`}>
+      {!embedded && <section className="collab-hero">
         <div>
           <span className="eyebrow">
             <Sparkles size={16} />
@@ -2111,7 +2217,7 @@ export function CollaborationHub({
             <BookOpen size={24} />
           </span>
         </div>
-      </section>
+      </section>}
       {!user.public_name && (
         <section className="collab-identity collab-card">
           <div>
@@ -2134,7 +2240,7 @@ export function CollaborationHub({
           </button>
         </section>
       )}
-      {user.public_name && (
+      {user.public_name && !embedded && (
         <div
           className="collab-tabs"
           role="tablist"
@@ -2152,7 +2258,7 @@ export function CollaborationHub({
               [
                 "people",
                 UserPlus,
-                isVi ? "Kết nối" : "Connections",
+                isVi ? "Bạn bè" : "Friends",
                 connections.filter((item) => item.status === "accepted").length,
               ],
               [
@@ -2222,7 +2328,7 @@ export function CollaborationHub({
         tab === "projects" &&
         (selectedProjectId && projectDetail ? (
           <div className="collab-project">
-            <button className="collab-back" type="button" onClick={backToHub}>
+            {!embedded && <><button className="collab-back" type="button" onClick={backToHub}>
               <ArrowLeft size={17} />
               {isVi ? "Tất cả dự án" : "All projects"}
             </button>
@@ -2314,7 +2420,7 @@ export function CollaborationHub({
                   {label}
                 </button>
               ))}
-            </div>
+            </div></>}
             {projectPane === "activity" && (
               <ProjectActivity
                 apiBase={apiBase}
@@ -2692,6 +2798,7 @@ export function CollaborationHub({
                 <h3>
                   {isVi ? "Cộng tác trong dự án" : "Project collaborators"}
                 </h3>
+                {projectDetail.owner && <div className="collab-member"><PersonChip person={projectDetail.owner} /><span>{isVi ? 'Chủ sở hữu · Toàn quyền' : 'Owner · Full access'}</span></div>}
                 <PendingInvitations
                   apiBase={apiBase}
                   language={language}
@@ -2745,6 +2852,7 @@ export function CollaborationHub({
                     {projectDetail.project.my_access >= 4 && (
                       <button
                         type="button"
+                        className="collab-icon-action"
                         onClick={() =>
                           void act(async () => {
                             await api(
@@ -3120,13 +3228,14 @@ export function CollaborationHub({
                   </form>
                 )}
                 <GroupManagement
+                  key={selectedGroup.id}
                   apiBase={apiBase}
                   language={language}
                   group={selectedGroup}
                   userId={user.id}
                   onChanged={async (removed) => {
                     await refresh();
-                    if (removed) setSelectedGroupId(null);
+                    if (removed) { setSelectedGroupId(null); window.location.hash = '#/collab'; }
                   }}
                 />
               </div>
@@ -3174,164 +3283,11 @@ export function CollaborationHub({
               {isVi ? "NHÓM MỚI" : "NEW GROUP"}
             </span>
             <h2>{isVi ? "Tạo nhóm nghiên cứu" : "Create research group"}</h2>
-            <form className="collab-form" onSubmit={createGroup}>
-              <label>
-                {isVi ? "Tên nhóm" : "Group name"}
-                <input
-                  value={groupName}
-                  onChange={(event) => setGroupName(event.target.value)}
-                  placeholder={isVi ? "Ví dụ: AI Lab" : "E.g. AI Lab"}
-                  maxLength={80}
-                />
-              </label>
-              <label>
-                {isVi ? "Mô tả" : "Description"}
-                <textarea
-                  value={groupDescription}
-                  onChange={(event) => setGroupDescription(event.target.value)}
-                  placeholder={
-                    isVi
-                      ? "Nhóm đang nghiên cứu điều gì?"
-                      : "What does this group study?"
-                  }
-                  maxLength={1000}
-                />
-              </label>
-              <p className="collab-muted">
-                <ShieldCheck size={15} />
-                {isVi
-                  ? "Nhóm kín mặc định. Chỉ người được mời và chấp nhận mới tham gia."
-                  : "Private by default. People join only after accepting an invitation."}
-              </p>
-              <button
-                type="submit"
-                disabled={busy || groupName.trim().length < 2}
-              >
-                <Plus size={16} />
-                {isVi ? "Tạo nhóm" : "Create group"}
-              </button>
-            </form>
+            <CreateGroupForm apiBase={apiBase} language={language} onCreated={groupCreated} />
           </section>
         </div>
       )}
-      {!loading && user.public_name && tab === "people" && (
-        <div className="collab-dashboard">
-          <section className="collab-card">
-            <span className="collab-kicker">
-              {isVi ? "TÌM ĐÚNG NGƯỜI" : "FIND THE RIGHT PERSON"}
-            </span>
-            <h2>{isVi ? "Kết nối nghiên cứu" : "Research connections"}</h2>
-            <p className="collab-muted">
-              {isVi
-                ? "Tìm theo tên người dùng duy nhất. Kết bạn không tự mở bất kỳ ghi chú hay dự án nào."
-                : "Search by unique username. Connecting never opens a page or project automatically."}
-            </p>
-            <button
-              type="button"
-              className="collab-secondary-button"
-              onClick={onEditProfile}
-            >
-              {isVi ? "Chỉnh sửa tên trong hồ sơ" : "Edit name in profile"} ·{" "}
-              {user.public_name}
-            </button>
-            <div className="collab-search">
-              <Search size={18} />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={
-                  isVi ? "Nhập ít nhất 2 ký tự…" : "Type at least 2 characters…"
-                }
-              />
-            </div>
-            {people.map((person) => (
-              <div className="collab-person-result" key={person.id}>
-                <PersonChip person={person} />
-                <button
-                  type="button"
-                  disabled={
-                    busy ||
-                    connections.some(
-                      (item) =>
-                        item.person.id === person.id &&
-                        ["pending", "accepted"].includes(item.status),
-                    )
-                  }
-                  onClick={() => requestConnection(person)}
-                >
-                  <UserPlus size={16} />
-                  {isVi ? "Kết nối" : "Connect"}
-                </button>
-              </div>
-            ))}
-          </section>
-          <section className="collab-card">
-            <h2>{isVi ? "Danh sách kết nối" : "Your connections"}</h2>
-            {connections
-              .filter(
-                (item) =>
-                  (item.status === "pending" &&
-                    item.direction === "outgoing") ||
-                  item.status === "blocked",
-              )
-              .map((item) => (
-                <div className="collab-person-result" key={item.id}>
-                  <PersonChip person={item.person} />
-                  <small>
-                    {item.status === "blocked"
-                      ? isVi
-                        ? "Đã chặn"
-                        : "Blocked"
-                      : isVi
-                        ? "Đã gửi lời mời"
-                        : "Request sent"}
-                  </small>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      void act(async () => {
-                        await api(apiBase, `/connections/${item.id}`, {
-                          method: "DELETE",
-                        });
-                        await refresh();
-                      })
-                    }
-                  >
-                    {item.status === "blocked"
-                      ? isVi
-                        ? "Bỏ chặn"
-                        : "Unblock"
-                      : isVi
-                        ? "Hủy"
-                        : "Cancel"}
-                  </button>
-                </div>
-              ))}
-            {connections
-              .filter((item) => item.status === "accepted")
-              .map((item) => (
-                <div className="collab-person-result" key={item.id}>
-                  <PersonChip person={item.person} />
-                  <button
-                    type="button"
-                    title={isVi ? "Chặn" : "Block"}
-                    onClick={() => respondConnection(item, "block")}
-                  >
-                    <ShieldCheck size={15} />
-                  </button>
-                </div>
-              ))}
-            {!connections.some((item) => item.status === "accepted") && (
-              <p className="collab-muted">
-                {isVi
-                  ? "Chưa có kết nối. Bạn vẫn có thể mời trực tiếp vào nhóm bằng tên người dùng."
-                  : "No connections yet. You can still invite someone directly to a group by username."}
-              </p>
-            )}
-          </section>
-        </div>
-      )}
+      {!loading && user.public_name && tab === "people" && <FriendsPanel apiBase={apiBase} language={language} user={user} onEditProfile={onEditProfile} />}
       {!loading && user.public_name && tab === "inbox" && (
         <section className="collab-card collab-inbox">
           <h2>{isVi ? "Lời mời đang chờ" : "Pending invitations"}</h2>

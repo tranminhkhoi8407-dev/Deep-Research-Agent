@@ -40,6 +40,7 @@ from backend.schemas import (
 from backend.auth import current_admin, current_user, provider_status, router as auth_router
 from backend.paper_library import router as paper_library_router
 from backend.collaboration import router as collaboration_router
+from backend.notifications import router as notifications_router
 from backend.research_documents import router as research_documents_router
 from backend.report_export import ExportError, export_report
 from backend.sessions import RememberSessionMiddleware
@@ -197,6 +198,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(paper_library_router)
 app.include_router(collaboration_router)
+app.include_router(notifications_router)
 app.include_router(research_documents_router)
 
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, FilePlus2, FileText, GripVertical, Link2, Search } from "lucide-react";
 import type { Language } from "./ProductViews";
 import type { DomainResearchPayload, ResearchDomainId } from "./DomainHub";
@@ -6,26 +6,42 @@ import type { DomainResearchPayload, ResearchDomainId } from "./DomainHub";
 export type NotebookPage = { id: string; title: string; parent_id: string | null; position?: number; icon?: string; favorite?: boolean; updated_at?: string };
 export type NotebookEvidence = { id: string; title: string; url: string; doi: string; note: string };
 export type NotebookReferences = { pages: NotebookPage[]; evidence: NotebookEvidence[]; backlinks: { id: string; title: string }[] };
+type ConfirmationOptions = { title?: string; confirmLabel?: string; destructive?: boolean };
 
-// Native modal focus handling keeps Escape/Tab and return focus predictable.
+// A themed native dialog handles modality and return focus; Tab wraps inside it.
 // The action happens only after confirmation; unmounting cancels it safely.
 export function useNotebookConfirm(language: Language) {
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState<{ message: string; options: ConfirmationOptions } | null>(null);
+  const titleId = useId(), messageId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const pending = useRef<((accepted: boolean) => void) | null>(null);
-  const ask = useCallback((message: string) => new Promise<boolean>(resolve => {
-    pending.current?.(false); pending.current = resolve; setPrompt(message);
+  const ask = useCallback((message: string, options: ConfirmationOptions = {}) => new Promise<boolean>(resolve => {
+    opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    pending.current?.(false); pending.current = resolve; setPrompt({ message, options });
   }), []);
   const finish = (accepted: boolean) => {
     const resolve = pending.current; pending.current = null;
-    dialog.current?.close(); setPrompt(""); resolve?.(accepted);
+    const returnFocus = opener.current; opener.current = null;
+    dialog.current?.close(); setPrompt(null); resolve?.(accepted);
+    // Callers can keep the trigger disabled while awaiting confirmation. Restore
+    // after React has processed cancellation, without stealing a new dialog's focus.
+    requestAnimationFrame(() => {
+      if (returnFocus?.isConnected && !document.querySelector('dialog[open]')) returnFocus.focus();
+    });
   };
   useEffect(() => { if (prompt && !dialog.current?.open) dialog.current?.showModal(); }, [prompt]);
   useEffect(() => () => { pending.current?.(false); pending.current = null; }, []);
-  const confirmation = <dialog ref={dialog} className="notebook-confirm" aria-labelledby="notebook-confirm-title" onCancel={event => { event.preventDefault(); finish(false); }}>
-    <h3 id="notebook-confirm-title">{language === "vi" ? "Xác nhận thao tác" : "Confirm notebook action"}</h3>
-    <p>{prompt}</p>
-    <div><button type="button" autoFocus onClick={() => finish(false)}>{language === "vi" ? "Hủy" : "Cancel"}</button><button type="button" onClick={() => finish(true)}>{language === "vi" ? "Xác nhận" : "Confirm"}</button></div>
+  const confirmation = <dialog ref={dialog} className="notebook-confirm" aria-labelledby={titleId} aria-describedby={messageId} onCancel={event => { event.preventDefault(); finish(false); }} onKeyDown={event => {
+    if (event.key !== 'Tab') return;
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')];
+    const first = buttons[0], last = buttons[buttons.length - 1];
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }}>
+    <h3 id={titleId}>{prompt?.options.title || (language === "vi" ? "Xác nhận thao tác" : "Confirm notebook action")}</h3>
+    <p id={messageId}>{prompt?.message}</p>
+    <div><button type="button" autoFocus onClick={() => finish(false)}>{language === "vi" ? "Hủy" : "Cancel"}</button><button type="button" className={prompt?.options.destructive ? 'is-danger' : undefined} onClick={() => finish(true)}>{prompt?.options.confirmLabel || (language === "vi" ? "Xác nhận" : "Confirm")}</button></div>
   </dialog>;
   return [ask, confirmation] as const;
 }

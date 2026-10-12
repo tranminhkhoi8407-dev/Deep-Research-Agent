@@ -3,20 +3,20 @@ export type WorkspaceTab = { id: string; history: TabEntry[]; index: number };
 export type TabState = { tabs: WorkspaceTab[]; active: string };
 export const tabLimit = 20;
 const validHash = (value: unknown): value is string => typeof value === 'string' && /^#\/fields\/(mathematics|physics|chemistry|biology|artificial-intelligence)(\/page\/[a-f0-9]{32})?$/.test(value);
-export function restoreTabs(value: unknown): TabState {
+export function restoreTabs(value: unknown, validate: (value: unknown) => boolean = validHash): TabState {
   if (!value || typeof value !== 'object') return { tabs: [], active: '' };
   const saved = value as Partial<TabState>, ids = new Set<string>();
   const tabs: WorkspaceTab[] = [];
   for (const tab of Array.isArray(saved.tabs) ? saved.tabs.slice(0, tabLimit) : []) {
     if (!tab || typeof tab.id !== 'string' || !tab.id || ids.has(tab.id) || !Array.isArray(tab.history)) continue;
-    if (tab.history.length > 50 || !tab.history.length || !tab.history.every(entry => entry && validHash(entry.hash) && typeof entry.title === 'string' && typeof entry.icon === 'string')) continue;
+    if (tab.history.length > 50 || !tab.history.length || !tab.history.every(entry => entry && validate(entry.hash) && typeof entry.title === 'string' && typeof entry.icon === 'string')) continue;
     ids.add(tab.id);
     tabs.push({ id: tab.id, history: tab.history.map(entry => ({ hash: entry.hash, title: entry.title.slice(0, 120), icon: entry.icon.slice(0, 16) })), index: Number.isInteger(tab.index) ? Math.max(0, Math.min(tab.index, tab.history.length - 1)) : 0 });
   }
   return { tabs, active: tabs.some(tab => tab.id === saved.active) ? saved.active! : tabs[0]?.id || '' };
 }
-export function visitTab(state: TabState, entry: TabEntry, newId?: string): TabState {
-  if (!validHash(entry.hash)) return state;
+export function visitTab(state: TabState, entry: TabEntry, newId?: string, validate: (value: unknown) => boolean = validHash): TabState {
+  if (!validate(entry.hash)) return state;
   if (newId && state.tabs.length >= tabLimit) return state;
   const active = state.tabs.find(tab => tab.id === state.active);
   if (newId || !active) {

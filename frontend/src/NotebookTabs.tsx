@@ -11,7 +11,7 @@ export type TabControls = {
   onStep: (direction: number) => void; onOpen: (page: TabPage) => void;
   onResolved: (hash: string, title: string, icon: string) => void;
 };
-export function NotebookTabs({ controls, language, onAdd }: { controls: TabControls; language: Language; onAdd: () => void }) {
+export function NotebookTabs({ controls, language, onAdd, disabledAdd = false }: { controls: TabControls; language: Language; onAdd: () => void; disabledAdd?: boolean }) {
   const vi = language === 'vi', active = controls.state.tabs.find(tab => tab.id === controls.state.active), listRef = useRef<HTMLDivElement>(null);
   useEffect(() => { listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }, [controls.state.active]);
   const moveFocus = (event: React.KeyboardEvent, index: number) => {
@@ -30,7 +30,7 @@ export function NotebookTabs({ controls, language, onAdd }: { controls: TabContr
       const entry = tab.history[tab.index], selected = tab.id === controls.state.active;
       return <div className={`notebook-tab ${selected ? 'is-active' : ''}`} key={tab.id}><button role="tab" aria-selected={selected} tabIndex={selected ? 0 : -1} onKeyDown={event => moveFocus(event, index)} onClick={() => controls.onSelect(tab.id)} title={entry.title}><NotebookPageIcon icon={entry.icon} size={15} /><span>{entry.title}</span></button><button aria-label={`${vi ? 'Đóng tab' : 'Close tab'} ${entry.title}`} onClick={() => controls.onClose(tab.id)}><X size={13} /></button></div>;
     })}</div>
-    <button className="notebook-tab-add" aria-label={vi ? 'Mở trang trong tab mới' : 'Open page in new workspace tab'} disabled={controls.state.tabs.length >= tabLimit} title={vi ? 'Tìm trang hoặc tạo trang mới' : 'Find a page or create a new page'} onClick={onAdd}><Plus size={19} /></button>
+    <button className="notebook-tab-add" aria-label={vi ? 'Mở trang trong tab mới' : 'Open page in new workspace tab'} disabled={disabledAdd || controls.state.tabs.length >= tabLimit} title={vi ? 'Tìm trang hoặc tạo trang mới' : 'Find a page or create a new page'} onClick={onAdd}><Plus size={19} /></button>
   </div>;
 }
 export function NotebookTabPicker({ apiBase, language, field, onOpen, onNewPage, onClose }: { apiBase: string; language: Language; field: ResearchDomainId; onOpen: (page: TabPage) => void; onNewPage: () => void; onClose: () => void }) {

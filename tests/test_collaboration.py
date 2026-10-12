@@ -222,6 +222,73 @@ def name(client: TestClient, value: str):
     assert response.status_code == 200, response.text
 
 
+def test_group_creation_needs_a_name_not_existing_members_and_trims_before_validation():
+    with TestClient(app) as alice, TestClient(app) as bob:
+        for client, username in [(alice, "Alice"), (bob, "Bob")]:
+            account(client, username.lower()); name(client, username)
+        for invalid in ["", " ", "   ", " A ", "a", "x" * 81]:
+            assert alice.post("/api/collab/groups", json={"name": invalid}).status_code == 422
+        assert alice.get("/api/collab/groups").json()["groups"] == []
+        response = alice.post("/api/collab/groups", json={"name": "  AI Lab  ", "description": "  First group  "})
+        assert response.status_code == 201, response.text
+        group = response.json()["group"]
+        assert group["name"] == "AI Lab" and group["description"] == "First group"
+        assert group["my_role"] == "owner" and len(group["members"]) == 1
+        invitation = alice.post(f"/api/collab/groups/{group['id']}/invites", json={"username": "Bob"}).json()["invite"]
+        assert bob.patch(f"/api/collab/invites/{invitation['id']}?action=accept").status_code == 200
+        assert len(alice.get(f"/api/collab/groups/{group['id']}").json()["group"]["members"]) == 2
+        second = alice.post("/api/collab/groups", json={"name": "Second lab"})
+        assert second.status_code == 201, second.text
+        assert len(second.json()["group"]["members"]) == 1
+        assert len(alice.get("/api/collab/groups").json()["groups"]) == 2
+        # Group editing shares the same validation; an invalid patch leaves the old name intact.
+        assert alice.patch(f"/api/collab/groups/{group['id']}", json={"name": "  "}).status_code == 422
+        assert alice.get(f"/api/collab/groups/{group['id']}").json()["group"]["name"] == "AI Lab"
+
+
+def test_project_workspace_preferences_are_per_viewer_and_do_not_widen_page_guest_access():
+    with TestClient(app) as alice, TestClient(app) as bob, TestClient(app) as carol:
+        for client, username in [(alice, "Alice"), (bob, "Bob"), (carol, "Carol")]:
+            account(client, username.lower()); name(client, username)
+        project = alice.post("/api/collab/projects", json={"name": "Workspace", "field": "mathematics"}).json()["project"]["id"]
+        page = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Proof"}).json()["page"]["id"]
+        secret = alice.post(f"/api/collab/projects/{project}/pages", json={"title": "Private sibling"}).json()["page"]["id"]
+        invite = alice.post(f"/api/collab/projects/{project}/invites", json={"username": "Bob", "role": "viewer"}).json()["invite"]["id"]
+        assert bob.patch(f"/api/collab/invites/{invite}?action=accept").status_code == 200
+        guest = alice.post(f"/api/collab/pages/{page}/invites", json={"username": "Carol", "role": "editor"}).json()["invite"]["id"]
+        assert carol.patch(f"/api/collab/invites/{guest}?action=accept").status_code == 200
+        assert alice.put(f"/api/collab/pages/{page}/preference", json={"favorite": True}).status_code == 200
+        left = alice.get(f"/api/collab/projects/{project}").json()
+        right = bob.get(f"/api/collab/projects/{project}").json()
+        assert left["home_page_id"] is None
+        assert left["owner"]["public_name"] == "Alice" and "email" not in left["owner"]
+        assert next(item for item in left["pages"] if item["id"] == page)["favorite"] == 1
+        assert all(not item["favorite"] and item["my_access"] == 1 for item in right["pages"])
+        page_invite = alice.post(f"/api/collab/pages/{page}/invites", json={"username": "Bob", "role": "editor"}).json()["invite"]["id"]
+        assert bob.patch(f"/api/collab/invites/{page_invite}?action=accept").status_code == 200
+        effective = {item["id"]: item["my_access"] for item in bob.get(f"/api/collab/projects/{project}").json()["pages"]}
+        assert effective[page] == 3 and effective[secret] == 1
+        assert alice.get(f"/api/collab/pages/{page}").json()["page"]["favorite"] is True
+        assert carol.get(f"/api/collab/pages/{page}").json()["page"]["favorite"] is False
+        assert carol.put(f"/api/collab/pages/{page}/preference", json={"favorite": True}).status_code == 200
+        assert carol.get(f"/api/collab/pages/{page}").json()["page"]["favorite"] is True
+        assert carol.get(f"/api/collab/projects/{project}").status_code == 404
+        assert carol.get(f"/api/collab/pages/{secret}").status_code == 404
+        assert carol.get(f"/api/collab/pages/{page}/references").json()["pages"] == []
+        assert carol.post(f"/api/collab/projects/{project}/pages", json={"title": "No"}).status_code == 404
+
+
+def test_project_workspace_exposes_protected_field_home_without_merging_other_fields():
+    with TestClient(app) as alice:
+        account(alice, "alice"); name(alice, "Alice")
+        math = alice.put("/api/collab/field-workspaces/mathematics", json={}).json()
+        biology = alice.put("/api/collab/field-workspaces/biology", json={}).json()
+        result = alice.get(f"/api/collab/projects/{math['project_id']}").json()
+        assert result["home_page_id"] == math["home_page_id"]
+        assert biology["home_page_id"] not in {item["id"] for item in result["pages"]}
+        assert alice.post(f"/api/collab/pages/{result['home_page_id']}/archive").status_code == 409
+
+
 def test_workspace_tab_picker_is_account_scoped_filters_titles_and_excludes_trash():
     with TestClient(app) as alice, TestClient(app) as bob:
         account(alice, "alice"); name(alice, "Alice")
@@ -766,6 +833,8 @@ def test_group_revocation_archive_restore_and_self_assignment():
         page = alice.post(f"/api/collab/projects/{project['id']}/pages", json={"title": "Experiment"}).json()["page"]
         invite = alice.post(f"/api/collab/groups/{group['id']}/invites", json={"username": "Bob"}).json()["invite"]
         bob.patch(f"/api/collab/invites/{invite['id']}?action=accept")
+        assert bob.post(f"/api/collab/groups/{group['id']}/archive").status_code == 403
+        assert bob.post(f"/api/collab/groups/{group['id']}/restore").status_code == 404
         invite = alice.post(f"/api/collab/projects/{project['id']}/invites", json={"username": "Bob", "role": "editor"}).json()["invite"]
         bob.patch(f"/api/collab/invites/{invite['id']}?action=accept")
         invite = alice.post(f"/api/collab/pages/{page['id']}/invites", json={"username": "Bob", "role": "editor"}).json()["invite"]

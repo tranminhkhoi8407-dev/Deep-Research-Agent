@@ -7,6 +7,7 @@ import {
   BookOpenCheck,
   Building2,
   CalendarDays,
+  Camera,
   Check,
   CircleUserRound,
   Clock3,
@@ -16,6 +17,7 @@ import {
   Flame,
   Globe2,
   GraduationCap,
+  ImagePlus,
   Layers3,
   Link2,
   LoaderCircle,
@@ -25,6 +27,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  Trash2,
   X,
 } from 'lucide-react';
 import { displayName, type AuthUser } from './Auth';
@@ -73,7 +76,7 @@ const copy = {
     edit: 'Chỉnh sửa hồ sơ', member: 'Thành viên', host: 'Host', joined: 'Tham gia', logins: 'lần đăng nhập',
     about: 'Giới thiệu', noBio: 'Thêm vài dòng về hướng nghiên cứu và mục tiêu của bạn.',
     interests: 'Mối quan tâm', noInterests: 'Chưa thêm lĩnh vực quan tâm.',
-    account: 'Tài khoản & quyền truy cập', provider: 'Nhà cung cấp', plan: 'Gói hiện tại', status: 'Trạng thái', active: 'Đang hoạt động',
+    account: 'Tài khoản & quyền truy cập', provider: 'Nhà cung cấp', signinUsername: 'Tên đăng nhập', plan: 'Gói hiện tại', status: 'Trạng thái', active: 'Đang hoạt động',
     stats: ['Báo cáo', 'Nguồn duy nhất', 'Phiên chuyên sâu', 'Nguồn chất lượng cao'],
     activity: 'Nhịp nghiên cứu', activityHint: 'Hoạt động tạo báo cáo trong 12 tháng gần nhất.', activeDays: 'ngày hoạt động', streak: 'chuỗi dài nhất', less: 'Ít', more: 'Nhiều',
     achievements: 'Cột mốc nghiên cứu', achievementsHint: 'Tự động mở khóa từ hoạt động thật trong workspace.', unlocked: 'Đã mở khóa', locked: 'Chưa đạt',
@@ -84,6 +87,11 @@ const copy = {
     name: 'Tên người dùng', required: 'Bắt buộc', nameHelp: 'Tên trên hồ sơ Nexora, dùng để tìm bạn bè và gửi lời mời. Phải duy nhất, 3–30 ký tự; chữ, số, dấu cách, dấu gạch ngang hoặc gạch dưới. Không có dấu @.', nameInvalid: 'Nhập tên từ 3–30 ký tự, bắt đầu và kết thúc bằng chữ hoặc số (hoặc gạch dưới). Không dùng @ hay ký tự đặc biệt.', nameTaken: 'Tên này đã có người đặt rồi. Vui lòng nhập tên khác.', nameMissing: 'Vui lòng nhập tên người dùng vào hồ sơ trước khi tiếp tục.', setupTitle: 'Đặt tên trong hồ sơ để mở Notebook & Dự án', setupHint: 'Lưu tên duy nhất tại Chỉnh sửa hồ sơ. Các thông tin khác không bắt buộc. Sau khi lưu, bạn sẽ quay lại nơi vừa định mở.', setupSave: 'Lưu hồ sơ & tiếp tục', updateError: 'Không lưu được hồ sơ. Vui lòng thử lại.', bio: 'Giới thiệu ngắn', location: 'Địa điểm', organization: 'Trường / tổ chức', website: 'Website', interestInput: 'Lĩnh vực quan tâm',
     interestHelp: 'Phân tách bằng dấu phẩy, tối đa 8 mục.', cancel: 'Hủy', save: 'Lưu thay đổi', saving: 'Đang lưu…', saved: 'Đã cập nhật hồ sơ.',
     websiteError: 'Website phải bắt đầu bằng http:// hoặc https://', completion: 'Độ hoàn thiện hồ sơ',
+    avatarChange: 'Đổi ảnh đại diện', avatarTitle: 'Ảnh đại diện', avatarHint: 'Tải ảnh vuông để hiển thị đẹp nhất. Ảnh được cắt vuông và nén tự động, tối đa 5 MB.',
+    avatarChoose: 'Chọn ảnh…', avatarReplace: 'Chọn ảnh khác…', avatarUpload: 'Lưu ảnh đại diện', avatarRemove: 'Gỡ ảnh đã tải lên', avatarCancel: 'Hủy',
+    avatarUploading: 'Đang tải lên…', avatarRemoving: 'Đang gỡ…', avatarUpdated: 'Đã cập nhật ảnh đại diện.', avatarRemoved: 'Đã gỡ ảnh đại diện.',
+    avatarCurrent: 'Ảnh hiện tại', avatarPreview: 'Xem trước', avatarInvalidType: 'Vui lòng chọn file ảnh (PNG, JPEG, WEBP hoặc GIF).',
+    avatarTooBig: 'Ảnh vượt quá 5 MB. Vui lòng chọn ảnh nhỏ hơn.', avatarUnreadable: 'Không đọc được file này. Vui lòng thử ảnh khác.',
   },
   en: {
     eyebrow: 'PERSONAL RESEARCH PROFILE', title: 'Your space, your research momentum.',
@@ -91,7 +99,7 @@ const copy = {
     edit: 'Edit profile', member: 'Member', host: 'Host', joined: 'Joined', logins: 'sign-ins',
     about: 'About', noBio: 'Add a short note about your research direction and goals.',
     interests: 'Research interests', noInterests: 'No research interests added yet.',
-    account: 'Account & access', provider: 'Provider', plan: 'Current plan', status: 'Status', active: 'Active',
+    account: 'Account & access', provider: 'Provider', signinUsername: 'Sign-in username', plan: 'Current plan', status: 'Status', active: 'Active',
     stats: ['Reports', 'Unique sources', 'Deep sessions', 'High-quality sources'],
     activity: 'Research activity', activityHint: 'Report creation activity over the last 12 months.', activeDays: 'active days', streak: 'longest streak', less: 'Less', more: 'More',
     achievements: 'Research milestones', achievementsHint: 'Unlocked automatically from real workspace activity.', unlocked: 'Unlocked', locked: 'Not yet',
@@ -102,6 +110,11 @@ const copy = {
     name: 'Username', required: 'Required', nameHelp: 'Your Nexora profile name, used to find friends and send invitations. Must be unique, 3–30 letters, numbers, spaces, hyphens or underscores. No @ symbol.', nameInvalid: 'Use 3–30 characters, starting and ending with a letter, number or underscore. No @ or special symbols.', nameTaken: 'This name is already taken. Please enter a different name.', nameMissing: 'Please set your username in your profile before continuing.', setupTitle: 'Set your profile name to open Notebook & Projects', setupHint: 'Save a unique name in Edit profile. All other details are optional. After saving, you will return to the place you wanted to open.', setupSave: 'Save profile & continue', updateError: 'Could not save your profile. Please try again.', bio: 'Short bio', location: 'Location', organization: 'School / organization', website: 'Website', interestInput: 'Research interests',
     interestHelp: 'Separate with commas, up to 8 items.', cancel: 'Cancel', save: 'Save changes', saving: 'Saving…', saved: 'Profile updated.',
     websiteError: 'Website must start with http:// or https://', completion: 'Profile completeness',
+    avatarChange: 'Change avatar', avatarTitle: 'Profile photo', avatarHint: 'A square photo looks best. Uploads are center-cropped square and compressed automatically, up to 5 MB.',
+    avatarChoose: 'Choose a photo…', avatarReplace: 'Choose a different photo…', avatarUpload: 'Save avatar', avatarRemove: 'Remove uploaded photo', avatarCancel: 'Cancel',
+    avatarUploading: 'Uploading…', avatarRemoving: 'Removing…', avatarUpdated: 'Avatar updated.', avatarRemoved: 'Uploaded avatar removed.',
+    avatarCurrent: 'Current', avatarPreview: 'Preview', avatarInvalidType: 'Please choose an image file (PNG, JPEG, WEBP or GIF).',
+    avatarTooBig: 'The image is larger than 5 MB. Please choose a smaller one.', avatarUnreadable: 'Could not read this file. Please try another image.',
   },
 } as const;
 
@@ -167,6 +180,105 @@ export function UserProfile({ apiBase, language, user, reports, nameRequired = f
   const [draft, setDraft] = useState<ProfileDraft>(() => profileDraft(user));
   const dialogRef = useRef<HTMLDialogElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const [avatarOpen, setAvatarOpen] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState<'upload' | 'remove' | null>(null);
+  const [avatarError, setAvatarError] = useState('');
+  const avatarFileRef = useRef<HTMLInputElement>(null);
+  const isCustomAvatar = (user.avatar_url || '').startsWith('/api/auth/avatars/');
+
+  useEffect(() => {
+    setAvatarFailed(false);
+  }, [user.avatar_url]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile]);
+
+  const openAvatarDialog = () => {
+    setAvatarFile(null);
+    setAvatarError('');
+    setAvatarOpen(true);
+  };
+
+  const closeAvatarDialog = () => {
+    if (avatarBusy) return;
+    setAvatarOpen(false);
+    setAvatarFile(null);
+    setAvatarError('');
+  };
+
+  const onAvatarFileChange = (file: File | null) => {
+    setAvatarError('');
+    if (!file) {
+      setAvatarFile(null);
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      setAvatarError(t.avatarInvalidType);
+      setAvatarFile(null);
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setAvatarError(t.avatarTooBig);
+      setAvatarFile(null);
+      return;
+    }
+    setAvatarFile(file);
+  };
+
+  const uploadAvatar = async () => {
+    if (!avatarFile || avatarBusy) return;
+    setAvatarBusy('upload');
+    setAvatarError('');
+    try {
+      const form = new FormData();
+      form.append('file', avatarFile);
+      const response = await fetch(`${apiBase}/api/auth/avatar`, {
+        method: 'POST', credentials: 'include', body: form,
+        signal: AbortSignal.timeout(20000),
+      });
+      const payload = await response.json().catch(() => ({})) as { user?: AuthUser; detail?: string };
+      if (!response.ok || !payload.user) throw new Error(typeof payload.detail === 'string' && payload.detail ? payload.detail : t.avatarUnreadable);
+      onUserUpdate(payload.user);
+      onNotify(t.avatarUpdated);
+      setAvatarOpen(false);
+      setAvatarFile(null);
+    } catch (caught) {
+      setAvatarError(caught instanceof Error ? caught.message : t.avatarUnreadable);
+    } finally {
+      setAvatarBusy(null);
+    }
+  };
+
+  const removeAvatar = async () => {
+    if (avatarBusy) return;
+    setAvatarBusy('remove');
+    setAvatarError('');
+    try {
+      const response = await fetch(`${apiBase}/api/auth/avatar`, {
+        method: 'DELETE', credentials: 'include',
+        signal: AbortSignal.timeout(10000),
+      });
+      const payload = await response.json().catch(() => ({})) as { user?: AuthUser; detail?: string };
+      if (!response.ok || !payload.user) throw new Error(typeof payload.detail === 'string' && payload.detail ? payload.detail : t.avatarUnreadable);
+      onUserUpdate(payload.user);
+      onNotify(t.avatarRemoved);
+      setAvatarOpen(false);
+      setAvatarFile(null);
+    } catch (caught) {
+      setAvatarError(caught instanceof Error ? caught.message : t.avatarUnreadable);
+    } finally {
+      setAvatarBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (!nameRequired && !editRequest) return;
@@ -300,21 +412,20 @@ export function UserProfile({ apiBase, language, user, reports, nameRequired = f
     <div className="profile-page">
       <section className="profile-hero" data-tour="profile-hero">
         <div><span>{t.eyebrow}</span><h1>{t.title}</h1><p>{t.description}</p></div>
-        <button className="button button--primary" type="button" onClick={openEditor}><Pencil size={17} />{t.edit}</button>
       </section>
 
       {(nameRequired || !user.public_name) && <section className="profile-setup-notice" aria-labelledby="profile-setup-title">
         <CircleUserRound size={24} aria-hidden="true" /><div><h2 id="profile-setup-title">{t.setupTitle}</h2><p>{nameRequired ? t.setupHint : t.nameMissing}</p></div>
-        <button className="button button--primary" type="button" onClick={openEditor}><Pencil size={16} />{t.edit}</button>
       </section>}
 
       <div className="profile-layout">
         <aside className="profile-sidebar">
           <section className="profile-identity-card">
-            <div className="profile-avatar">
+            <button className="profile-avatar profile-avatar--editable" type="button" onClick={openAvatarDialog} aria-label={t.avatarChange} title={t.avatarChange}>
               {user.avatar_url && !avatarFailed ? <img src={user.avatar_url} alt="" onError={() => setAvatarFailed(true)} /> : initials}
-              <span title={t.active}><Check size={14} /></span>
-            </div>
+              <span className="avatar-edit-badge" aria-hidden="true"><Camera size={14} /></span>
+              <span className="avatar-status-dot" title={t.active}><Check size={14} /></span>
+            </button>
             <h2>{name}</h2>
             <p>{user.email}</p>
             <div className="profile-role-row"><span><ShieldCheck size={14} />{user.role === 'admin' ? t.host : t.member}</span><span>{user.license_type.toUpperCase()}</span></div>
@@ -341,7 +452,7 @@ export function UserProfile({ apiBase, language, user, reports, nameRequired = f
 
           <section className="profile-account-card">
             <div><ShieldCheck size={18} /><h3>{t.account}</h3></div>
-            <dl><div><dt>{t.provider}</dt><dd>{user.provider}</dd></div><div><dt>{t.plan}</dt><dd>{user.license_type}</dd></div><div><dt>{t.status}</dt><dd className="is-active"><i />{t.active}</dd></div></dl>
+            <dl><div><dt>{t.provider}</dt><dd>{user.provider}</dd></div>{user.username && <div><dt>{t.signinUsername}</dt><dd>{user.username}</dd></div>}<div><dt>{t.plan}</dt><dd>{user.license_type}</dd></div><div><dt>{t.status}</dt><dd className="is-active"><i />{t.active}</dd></div></dl>
             {loginSession && onLoginSessionChange && <LoginSessionSettings key={user.id} language={language} session={loginSession} onSave={onLoginSessionChange} />}
           </section>
         </aside>
@@ -430,6 +541,63 @@ export function UserProfile({ apiBase, language, user, reports, nameRequired = f
               <footer><button className="button button--secondary" type="button" disabled={saving} onClick={() => setEditing(false)}>{t.cancel}</button><button className="button button--primary" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{saving ? t.saving : nameRequired ? t.setupSave : t.save}</button></footer>
             </form>
           </dialog>
+      ), document.body)}
+
+      {avatarOpen && createPortal((
+        <div className="profile-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAvatarDialog(); }}>
+          <div className="profile-dialog avatar-dialog" role="dialog" aria-modal="true" aria-labelledby="avatar-dialog-title" aria-describedby="avatar-dialog-description">
+            <header>
+              <div><span><ImagePlus size={19} /></span><div><h2 id="avatar-dialog-title">{t.avatarTitle}</h2><p id="avatar-dialog-description">{t.avatarHint}</p></div></div>
+              <button type="button" disabled={avatarBusy !== null} aria-label={t.avatarCancel} onClick={closeAvatarDialog}><X size={19} /></button>
+            </header>
+            <div className="avatar-dialog-body">
+              <div className="avatar-compare">
+                <div>
+                  <small>{t.avatarCurrent}</small>
+                  <span className="avatar-preview-box">
+                    {user.avatar_url && !avatarFailed
+                      ? <img src={user.avatar_url} alt="" onError={() => setAvatarFailed(true)} />
+                      : <strong>{initials}</strong>}
+                  </span>
+                </div>
+                <div>
+                  <small>{t.avatarPreview}</small>
+                  <span className="avatar-preview-box">
+                    {avatarPreview ? <img src={avatarPreview} alt="" /> : <strong>{initials}</strong>}
+                  </span>
+                </div>
+              </div>
+              <label className="avatar-file-button">
+                <input
+                  ref={avatarFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  disabled={avatarBusy !== null}
+                  onChange={(event) => {
+                    onAvatarFileChange(event.target.files?.[0] || null);
+                    event.target.value = '';
+                  }}
+                />
+                <ImagePlus size={16} aria-hidden="true" />
+                <span>{avatarFile ? t.avatarReplace : t.avatarChoose}</span>
+                {avatarFile && <em>{avatarFile.name}</em>}
+              </label>
+              {avatarError && <div className="profile-form-error" role="alert">{avatarError}</div>}
+            </div>
+            <footer>
+              {isCustomAvatar && (
+                <button className="button button--quiet danger-button" type="button" disabled={avatarBusy !== null} onClick={() => void removeAvatar()}>
+                  {avatarBusy === 'remove' ? <LoaderCircle className="spin" size={17} /> : <Trash2 size={17} />}{avatarBusy === 'remove' ? t.avatarRemoving : t.avatarRemove}
+                </button>
+              )}
+              <span className="avatar-footer-spacer" />
+              <button className="button button--secondary" type="button" disabled={avatarBusy !== null} onClick={closeAvatarDialog}>{t.avatarCancel}</button>
+              <button className="button button--primary" type="button" disabled={!avatarFile || avatarBusy !== null} onClick={() => void uploadAvatar()}>
+                {avatarBusy === 'upload' ? <LoaderCircle className="spin" size={17} /> : <Check size={17} />}{avatarBusy === 'upload' ? t.avatarUploading : t.avatarUpload}
+              </button>
+            </footer>
+          </div>
+        </div>
       ), document.body)}
     </div>
   );

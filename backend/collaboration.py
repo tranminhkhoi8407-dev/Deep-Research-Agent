@@ -255,7 +255,8 @@ def clean_public_name(value: str) -> tuple[str, str]:
 
 def public_user(conn: sqlite3.Connection, user_id: str) -> dict:
     row = conn.execute(
-        "SELECT id, public_name, COALESCE(NULLIF(public_name,''),NULLIF(display_name,''),name) display_name, avatar_url "
+        "SELECT id, public_name, COALESCE(NULLIF(public_name,''),NULLIF(display_name,''),name) display_name, "
+        "COALESCE(NULLIF(custom_avatar_url,''),avatar_url) avatar_url "
         "FROM users WHERE id = ? AND status = 'active'", (user_id,),
     ).fetchone()
     return dict(row) if row else {"id": user_id, "public_name": None, "display_name": "Former member", "avatar_url": None}

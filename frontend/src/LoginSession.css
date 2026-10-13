@@ -1,0 +1,45 @@
+.login-session-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--tone-danger, #fff0f1);
+  color: var(--tone-danger-ink, var(--red));
+  font-size: 13px;
+}
+.login-session-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.login-session-settings h4 {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+.login-session-settings h4 svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.login-session-settings p {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 8px;
+  color: var(--muted);
+}
+.login-session-settings small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.login-session-settings .button {
+  min-height: 40px;
+  font-size: 12px;
+  margin-top: 12px;
+  white-space: normal;
+}
+.login-session-settings button:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 3px;
+}

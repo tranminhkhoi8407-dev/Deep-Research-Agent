@@ -3,6 +3,7 @@ import { profileCompletionFromHash, profileSetupHash, type ProfileCompletion } f
 import { fieldRoute } from './fieldNavigation';
 import { projectWorkspaceRoute } from './projectNavigation';
 import { SocialProvider, SocialToolbar } from './SocialCenter';
+import { announceLoginSessionChange, loginSessionChangedKey, LoginSessionError, readLoginSession, saveLoginSession, type LoginSession } from './authSession';
 import {
   AlertCircle,
   ArrowRight,
@@ -35,6 +36,9 @@ import { ResearchSetup, defaultResearchOptions, initialResearchOptions, type Res
 import { downloadReportArtifact, fetchReportArtifact } from "./reportExports";
 import { hasResearchInput, researchOutcome } from "./researchForm";
 import { ResearchEvidence, type ResearchReportData } from "./ResearchEvidence";
+import { ResearchChat } from './ResearchChat';
+import { ResearchReportsWorkspace } from './ResearchReportsWorkspace';
+import { researchHash, researchScreenFromHash, type ResearchScreen } from './researchNavigation';
 import {
   ProductNavigation,
   WorkspaceHub,
@@ -87,7 +91,8 @@ const CollaborationHub = lazy(() =>
 
 function routedViewFromHash(
   hash = window.location.hash,
-): "guide" | "pricing" | "profile" | "collab" | "domains" | "reports" | null {
+): "guide" | "pricing" | "profile" | "collab" | "domains" | "reports" | "research" | null {
+  if (researchScreenFromHash(hash)) return 'research';
   if (hash === '#/library') return 'reports';
   if (/^#\/fields(?:\/|$)/.test(hash)) return "domains";
   if (/^#\/guide(?:\/|$)/.test(hash)) return "guide";
@@ -566,6 +571,7 @@ export default function App() {
     useState<InformationView | null>(() => informationViewFromHash());
   const [topic, setTopic] = useState("");
   const [researchOptions, setResearchOptions] = useState<ResearchOptions>(initialResearchOptions);
+  const [researchInterface, setResearchInterface] = useState<ResearchScreen>(() => researchScreenFromHash(window.location.hash) || 'chat');
   useEffect(() => {
     try { localStorage.setItem('nexora-report-preferences-v1', JSON.stringify({ reportLanguage: researchOptions.reportLanguage, preferredReportLanguage: researchOptions.preferredReportLanguage, detail: researchOptions.detail })); } catch { /* Optional preference storage. */ }
   }, [researchOptions.reportLanguage, researchOptions.preferredReportLanguage, researchOptions.detail]);
@@ -606,6 +612,11 @@ export default function App() {
     "checking" | "authenticated" | "unauthenticated"
   >("checking");
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [loginSession, setLoginSession] = useState<LoginSession | null>(null);
+  const authGeneration = useRef(0);
+  const sessionSaving = useRef(false);
+  const authUserRef = useRef(authUser);
+  authUserRef.current = authUser;
   const [authProviders, setAuthProviders] = useState<AuthProviders>({
     google: false,
     github: false,
@@ -679,10 +690,13 @@ export default function App() {
       setInformationView(infoView);
       const routedView = routedViewFromHash();
       setProfileCompletion(profileCompletionFromHash(window.location.hash));
-      if (routedView) setActiveView(routedView);
+      if (routedView) {
+        setActiveView(routedView);
+        if (routedView === 'research') setResearchInterface(researchScreenFromHash(window.location.hash) || 'chat');
+      }
       else if (!infoView)
         setActiveView((current) =>
-          current === "guide" || current === "pricing" || current === "profile" || current === "collab" || current === "domains"
+          current === "guide" || current === "pricing" || current === "profile" || current === "collab" || current === "domains" || current === 'research'
             ? "overview"
             : current,
         );
@@ -738,6 +752,7 @@ export default function App() {
           }),
           fetch(`${API_BASE}/api/auth/me`, {
             credentials: "include",
+            cache: "no-store",
             signal: AbortSignal.timeout(8000),
           }),
         ]);
@@ -750,6 +765,7 @@ export default function App() {
         const mePayload = (await meResponse.json()) as {
           authenticated?: boolean;
           user?: AuthUser | null;
+          session?: unknown;
         };
         if (cancelled) return;
         setAuthProviders({
@@ -759,6 +775,7 @@ export default function App() {
         });
         if (mePayload.authenticated && mePayload.user) {
           setAuthUser(mePayload.user);
+          setLoginSession(readLoginSession(mePayload.session));
           setAuthStatus("authenticated");
           if (callbackSuccess) setShowWelcome(true);
         } else {
@@ -778,6 +795,45 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'authenticated' || !authUser) return;
+    const controller = new AbortController();
+    let inFlight = false, queued = false;
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible' || controller.signal.aborted) return;
+      if (inFlight) { queued = true; return; }
+      if (sessionSaving.current) return;
+      inFlight = true;
+      const generation = authGeneration.current;
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, { credentials: 'include', cache: 'no-store', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8000)]) });
+        if (!response.ok) return;
+        const payload = await response.json() as { authenticated?: boolean; user?: AuthUser; session?: unknown };
+        if (controller.signal.aborted || generation !== authGeneration.current) return;
+        if (payload.authenticated && payload.user) {
+          if (payload.user.id !== authUserRef.current?.id) {
+            // Reinitialize all account-scoped report/editor state after a switch in another tab.
+            window.location.reload();
+            return;
+          }
+          setAuthUser(payload.user);
+          setLoginSession(readLoginSession(payload.session));
+        } else {
+          authGeneration.current++;
+          socketRef.current?.close();
+          socketRef.current = null;
+          setAuthUser(null); setLoginSession(null); setAuthStatus('unauthenticated'); setShowWelcome(false);
+          setStatus('idle');
+        }
+      } catch { /* A temporary network error must not sign the user out. */ }
+      finally { inFlight = false; if (queued && !controller.signal.aborted) { queued = false; void refresh(); } }
+    };
+    const sync = (event: StorageEvent) => { if (event.key === loginSessionChangedKey) void refresh(); };
+    const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    window.addEventListener('storage', sync); window.addEventListener('focus', visible); document.addEventListener('visibilitychange', visible);
+    return () => { controller.abort(); window.removeEventListener('storage', sync); window.removeEventListener('focus', visible); document.removeEventListener('visibilitychange', visible); };
+  }, [authStatus, authUser?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -802,6 +858,11 @@ export default function App() {
   useEffect(() => {
     if (authStatus === "authenticated") void loadReports();
     if (authStatus === "unauthenticated") {
+      finishedRef.current = true;
+      socketRef.current?.close();
+      socketRef.current = null;
+      setLoginSession(null);
+      setStatus('idle');
       setStoredReports([]);
       setSelectedReport(null);
       setReportData(null);
@@ -845,30 +906,30 @@ export default function App() {
     [storedReports],
   );
 
-  const beginOAuth = (provider: "google" | "github", remember: boolean) => {
+  const beginOAuth = (provider: "google" | "github") => {
     setAuthError("");
     setAuthBusy(true);
-    const query = new URLSearchParams({ remember: String(remember) });
     window.location.assign(
-      `${API_BASE}/api/auth/login/${provider}?${query.toString()}`,
+      `${API_BASE}/api/auth/login/${provider}`,
     );
   };
 
-  const developmentLogin = async (remember: boolean) => {
+  const developmentLogin = async () => {
     setAuthBusy(true);
     setAuthError("");
     try {
-      const query = new URLSearchParams({ remember: String(remember) });
       const response = await fetch(
-        `${API_BASE}/api/auth/dev-login?${query.toString()}`,
+        `${API_BASE}/api/auth/dev-login`,
         {
           method: "POST",
           credentials: "include",
         },
       );
       if (!response.ok) throw new Error("Development login failed");
-      const payload = (await response.json()) as { user: AuthUser };
+      const payload = (await response.json()) as { user: AuthUser; session?: unknown };
+      authGeneration.current++;
       setAuthUser(payload.user);
+      setLoginSession(readLoginSession(payload.session));
       setAuthStatus("authenticated");
       setShowWelcome(true);
     } catch {
@@ -878,36 +939,66 @@ export default function App() {
     }
   };
 
-  const logout = async () => {
-    finishedRef.current = true;
-    socketRef.current?.close();
-    socketRef.current = null;
+  const chooseLoginSession = async (remember: boolean) => {
+    if (!authUserRef.current || sessionSaving.current) throw new LoginSessionError(409);
+    sessionSaving.current = true;
+    const generation = ++authGeneration.current;
     try {
-      await fetch(`${API_BASE}/api/auth/logout`, {
+      const result = await saveLoginSession(API_BASE, remember);
+      if (generation !== authGeneration.current || !authUserRef.current) throw new LoginSessionError(409);
+      setLoginSession(result);
+      announceLoginSessionChange();
+    } catch (error) {
+      if (generation === authGeneration.current && error instanceof LoginSessionError && [401, 403].includes(error.status)) {
+        // A forbidden preference update is not consent and never enables persistence.
+        if (error.status === 401) { setAuthUser(null); setLoginSession(null); setAuthStatus('unauthenticated'); setShowWelcome(false); }
+      }
+      throw error;
+    } finally {
+      sessionSaving.current = false;
+      authGeneration.current++;
+    }
+  };
+
+  const logout = async () => {
+    authGeneration.current++;
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/logout`, {
         method: "POST",
         credentials: "include",
+        signal: AbortSignal.timeout(8000),
       });
-    } finally {
+      if (!response.ok) throw new Error('Sign out failed');
+      finishedRef.current = true;
+      socketRef.current?.close();
+      socketRef.current = null;
+      announceLoginSessionChange();
       setAuthUser(null);
+      setLoginSession(null);
+      setShowWelcome(false);
       setProfileCompletion(null);
       setProfileEditRequest(0);
       setAuthStatus("unauthenticated");
       setActiveView("overview");
       setStatus("idle");
+    } catch {
+      setNotice(language === 'vi' ? 'Chưa đăng xuất được. Kiểm tra kết nối và thử lại.' : 'Could not sign out. Check your connection and try again.');
+      window.setTimeout(() => setNotice(''), 5000);
     }
   };
 
   const navigateTo = (view: AppView) => {
     if (view === 'domains' && activeView === 'domains' && !informationView) { window.location.hash = '#/fields'; return; }
-    if (view === activeView && !informationView && !(view === 'domains' && window.location.hash !== '#/fields')) return;
+    if (view === activeView && !informationView && !(view === 'domains' && window.location.hash !== '#/fields') && !(view === 'research' && researchInterface !== 'chat')) return;
     const changeView = () => {
       setProfileCompletion(null);
       setProfileEditRequest(0);
       if (view !== 'collab') setCollabField(null);
       setInformationView(null);
       setActiveView(view);
+      if (view === 'research') setResearchInterface('chat');
       const route =
-        view === "guide" || view === "pricing" || view === "profile" || view === "collab"
+        view === "guide" || view === "pricing" || view === "profile" || view === "collab" || view === "research"
           ? `${window.location.pathname}#/${view}`
           : view === 'domains' ? `${window.location.pathname}#/fields` : window.location.pathname;
       window.history.pushState({}, "", route);
@@ -924,6 +1015,15 @@ export default function App() {
     } else {
       changeView();
     }
+  };
+
+  const openResearchReports = () => {
+    setProfileCompletion(null); setProfileEditRequest(0); setInformationView(null);
+    setActiveView('research'); setResearchInterface('classic');
+    const hash = researchHash('classic');
+    if (window.location.hash !== hash) window.history.pushState({}, '', `${window.location.pathname}${window.location.search}${hash}`);
+    setRouteHash(hash);
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   };
 
   const navigateToInformation = (view: InformationView) => {
@@ -1028,6 +1128,7 @@ export default function App() {
           collect_evidence: ["research", language === "vi" ? "Đọc và lưu bằng chứng" : "Read and cache evidence"],
           assess_coverage: ["research", language === "vi" ? "Kiểm tra câu hỏi còn thiếu" : "Check evidence gaps"],
           draft_report: ["synthesis", language === "vi" ? "Viết báo cáo có cấu trúc" : "Write structured report"],
+          generate_visuals: ["synthesis", language === "vi" ? "Tạo sơ đồ và bảng có nguồn" : "Create sourced diagrams and tables"],
           audit_evidence: ["synthesis", language === "vi" ? "Đối chiếu nhận xét với trích đoạn" : "Check claims against excerpts"],
           improve_report: ["synthesis", language === "vi" ? "Bổ sung giải thích và kiểm tra chất lượng" : "Improve explanation and check quality"],
           apply_editorial_feedback: ["synthesis", language === "vi" ? "Áp dụng góp ý trong ngân sách" : "Apply feedback within budget"],
@@ -1202,8 +1303,10 @@ export default function App() {
   };
 
   const openResearch = (suggestedTopic?: string, paper?: { input: string; field: string }) => {
+    // Library/Fields briefs must never be injected into a restored conversation.
+    const reportsRequested = suggestedTopic !== undefined || !!paper || isBusy;
     if (isBusy) {
-      navigateTo("research");
+      openResearchReports();
       return;
     }
     if (
@@ -1216,7 +1319,7 @@ export default function App() {
     }
     if (suggestedTopic) setTopic(suggestedTopic);
     if (paper) setResearchOptions({ ...initialResearchOptions(), mode: "paper", paperInput: paper.input, field: paper.field });
-    navigateTo("research");
+    if (reportsRequested) openResearchReports(); else navigateTo('research');
   };
 
   const openDomainResearch = (payload: DomainResearchPayload) => {
@@ -1227,14 +1330,14 @@ export default function App() {
           : "Finish or stop the active session first.",
       );
       window.setTimeout(() => setNotice(""), 2600);
-      navigateTo("research");
+      openResearchReports();
       return;
     }
     startOver();
     setResearchContext(payload);
     setTopic(payload.topic);
     if (payload.analysisMode === "paper") setResearchOptions({ ...initialResearchOptions(), mode: "paper", field: payload.domain });
-    navigateTo("research");
+    openResearchReports();
     setNotice(
       language === "vi"
         ? "Đã áp dụng context lĩnh vực vào brief."
@@ -1378,7 +1481,7 @@ export default function App() {
         busy={authBusy}
         error={authError}
         onOAuth={beginOAuth}
-        onDevelopmentLogin={(remember) => void developmentLogin(remember)}
+        onDevelopmentLogin={() => void developmentLogin()}
         onOpenInformation={navigateToInformation}
       />
     );
@@ -1386,10 +1489,11 @@ export default function App() {
 
   const standaloneField = activeView === 'domains' && !informationView && (!!fieldRoute(routeHash) || routeHash === '#/fields/guide');
   const standaloneProject = activeView === 'collab' && !informationView && !!authUser.public_name && !!projectWorkspaceRoute(routeHash);
-  const standaloneWorkspace = standaloneField || standaloneProject;
+  const standaloneResearch = activeView === 'research' && !informationView;
+  const standaloneWorkspace = standaloneField || standaloneProject || standaloneResearch;
   return (
     <SocialProvider key={authUser.id} apiBase={API_BASE} user={authUser} language={language} onEditProfile={openProfileEditor}>
-    <div className={`app-shell app-shell--ready${standaloneWorkspace ? ' app-shell--field' : ''}${standaloneProject ? ' app-shell--project' : ''}`}>
+    <div className={`app-shell app-shell--ready${standaloneField || standaloneProject ? ' app-shell--field' : ''}${standaloneProject ? ' app-shell--project' : ''}${standaloneResearch ? ' app-shell--research' : ''}`}>
       {showWelcome && <WelcomeTransition user={authUser} language={language} />}
       {!standaloneWorkspace && <>
       <header className="topbar">
@@ -1533,6 +1637,8 @@ export default function App() {
               reports={storedReports}
               nameRequired={Boolean(profileCompletion) || activeView === 'collab'}
               editRequest={profileEditRequest}
+              loginSession={loginSession}
+              onLoginSessionChange={chooseLoginSession}
               onNavigate={navigateTo}
               onOpenReport={(report) => void openStoredReport(report)}
               onUserUpdate={(updated) => {
@@ -1556,7 +1662,12 @@ export default function App() {
           </Suspense>
         </main>
       ) : activeView === "research" ? (
-        <main className="workspace view-enter" key="research">
+        <>
+        <div className="research-chat-screen" hidden={researchInterface !== 'chat'}>
+          <ResearchChat key={authUser.id} visible={researchInterface === 'chat'} reportRunning={isBusy} userId={authUser.id} user={authUser} apiBase={API_BASE} language={language} onClassic={openResearchReports} onReportsChanged={() => void loadReports()} onNavigate={navigateTo} appearance={appearance} onAppearanceChange={setAppearance} onLanguageChange={setLanguage} onLogout={() => void logout()} />
+        </div>
+        {researchInterface === 'classic' && <ResearchReportsWorkspace language={language} running={isBusy} onBack={() => navigateTo('research')} onExit={() => navigateTo('overview')}>
+        <main className={`workspace view-enter${reportData && (status === 'completed' || status === 'partial') ? ' workspace--reader' : ''}`} key="research">
           <section className="showcase-panel">
             <div className="showcase-grid" aria-hidden="true" />
             <div className="showcase-content">
@@ -2089,6 +2200,8 @@ export default function App() {
             </section>
           </section>
         </main>
+        </ResearchReportsWorkspace>}
+        </>
       ) : activeView === "domains" ? (
         <main className="product-page fields-page-shell" key="domains">
           <Suspense

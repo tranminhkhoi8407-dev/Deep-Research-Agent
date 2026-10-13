@@ -1,6 +1,6 @@
-export type ProjectPane = 'overview' | 'pages' | 'tasks' | 'evidence' | 'members' | 'activity' | 'settings' | 'archived';
+export type ProjectPane = 'overview' | 'pages' | 'discussion' | 'meetings' | 'tasks' | 'evidence' | 'members' | 'activity' | 'settings' | 'archived';
 export type ProjectRoute = { projectId: string | null; pageId: string | null; pane: ProjectPane };
-const panes: ProjectPane[] = ['overview', 'pages', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived'];
+const panes: ProjectPane[] = ['overview', 'pages', 'discussion', 'meetings', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived'];
 const idPattern = /^[a-f0-9]{32}$/;
 export const isProjectPageHash = (value: unknown): value is string => typeof value === 'string' && /^#\/collab\/page\/[a-f0-9]{32}$/.test(value);
 

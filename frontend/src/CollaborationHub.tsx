@@ -50,6 +50,9 @@ import { ProjectWorkspace } from './ProjectWorkspace';
 import { projectWorkspaceRoute, type ProjectPane } from './projectNavigation';
 import { NotebookPageIcon } from './NotebookPageIcon';
 import { NotebookApiError } from './notebookApi';
+import { GroupSpace } from './GroupSpace';
+import { DiscussionSpace } from './DiscussionSpace';
+import { MeetingsPanel } from './MeetingsPanel';
 
 const LiveEditor = lazy(() => import("./LiveResearchEditor"));
 
@@ -800,7 +803,7 @@ export function PageView({
               if (file.size > 500000) throw new Error("Backup must be smaller than 500 KB");
               const backup = JSON.parse(await file.text()) as { format?: string; version?: number; blocks?: NotebookBlock[] };
               if (backup.format !== "nexora-notebook" || backup.version !== 1 || !Array.isArray(backup.blocks) || !backup.blocks.length) throw new Error("Choose a Nexora notebook JSON backup (version 1)");
-              const allowed = new Set(["paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "toggleListItem", "quote", "codeBlock", "table", "divider", "mathBlock"]);
+              const allowed = new Set(["paragraph", "heading", "bulletListItem", "numberedListItem", "checkListItem", "toggleListItem", "quote", "codeBlock", "table", "divider", "mathBlock", "notebookImage", "webLink"]);
               let count = 0;
               const copied = (items: NotebookBlock[], depth = 0): NotebookBlock[] => items.map(item => {
                 if (++count > 3000 || depth > 50 || !allowed.has(item.type)) throw new Error("Backup contains unsupported or too many blocks");
@@ -912,7 +915,7 @@ export function PageView({
               </button>
             ))}
           </div>
-          {openPanel === "sources" && <NotebookSources language={language} references={{ ...references, pages: references.pages.filter(page => page.id !== pageId) }} body={body} canEdit={canEdit && synced} onOpen={onOpen} onInsert={content => setOperation({ id: Date.now(), mode: "append", content })} />}
+          {openPanel === "sources" && <NotebookSources language={language} references={{ ...references, pages: references.pages.filter(page => page.id !== pageId && (!workspace || workspace.pages.some(visible => visible.id === page.id))) }} body={body} canEdit={canEdit && synced} onOpen={onOpen} onInsert={content => setOperation({ id: Date.now(), mode: "append", content })} />}
           {openPanel === "discussion" && (
             <div className="collab-side-content">
               <h3>
@@ -2421,6 +2424,8 @@ function CollaborationDashboard({
                 </button>
               ))}
             </div></>}
+            {projectPane === 'discussion' && <DiscussionSpace key={`${user.id}:${selectedProjectId}`} apiBase={apiBase} scope={{ kind: 'project', id: selectedProjectId }} language={language} userId={user.id} attachments={[...projectDetail.pages.map(page => ({ kind: 'page' as const, id: page.id, title: page.title })), ...projectDetail.evidence.map(item => ({ kind: 'evidence' as const, id: item.id, title: item.title }))]} onChanged={async () => { const updated = await api<ProjectDetail>(apiBase, `/projects/${selectedProjectId}`); setProjectDetail(updated); embedded?.onChanged(updated); }} />}
+            {projectPane === 'meetings' && <MeetingsPanel key={`${user.id}:${selectedProjectId}`} apiBase={apiBase} scope={{ kind: 'project', id: selectedProjectId }} language={language} userId={user.id} />}
             {projectPane === "activity" && (
               <ProjectActivity
                 apiBase={apiBase}
@@ -3168,7 +3173,7 @@ function CollaborationDashboard({
           </div>
         ))}
       {!loading && user.public_name && tab === "groups" && (
-        <div className="collab-dashboard">
+        <div className="collab-dashboard collab-dashboard--groups">
           <section className="collab-card">
             <div className="collab-section-title">
               <div>
@@ -3185,7 +3190,7 @@ function CollaborationDashboard({
                   type="button"
                   key={group.id}
                   className={selectedGroupId === group.id ? "is-active" : ""}
-                  onClick={() => setSelectedGroupId(group.id)}
+                  onClick={() => { setSelectedGroupId(group.id); window.location.hash = `#/collab/group/${group.id}`; }}
                 >
                   <span>
                     <Users size={20} />
@@ -3199,14 +3204,7 @@ function CollaborationDashboard({
               ))}
             </div>
             {selectedGroup && (
-              <div className="collab-group-detail">
-                <h3>{selectedGroup.name}</h3>
-                <p>
-                  {selectedGroup.description ||
-                    (isVi
-                      ? "Không gian nghiên cứu kín của nhóm."
-                      : "A private research space for the group.")}
-                </p>
+              <GroupSpace key={`${user.id}:${selectedGroup.id}`} apiBase={apiBase} group={selectedGroup} language={language} userId={user.id} onOpenProject={openProject} onCreated={refresh} members={<div className="collab-group-detail">
                 {["owner", "admin"].includes(selectedGroup.my_role) && (
                   <form className="collab-inline-form" onSubmit={inviteGroup}>
                     <input
@@ -3238,7 +3236,7 @@ function CollaborationDashboard({
                     if (removed) { setSelectedGroupId(null); window.location.hash = '#/collab'; }
                   }}
                 />
-              </div>
+              </div>} />
             )}
             {!groups.length && (
               <div className="collab-empty">

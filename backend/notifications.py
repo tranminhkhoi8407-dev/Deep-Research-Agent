@@ -100,7 +100,7 @@ def rate_limit(conn: sqlite3.Connection, actor: str, action: str, target: str | 
     minute = (current - timedelta(minutes=1)).isoformat()
     count = conn.execute("SELECT COUNT(*) FROM social_action_log WHERE actor_id=? AND action=? AND created_at>=?",
                          (actor, action, minute)).fetchone()[0]
-    if count >= (60 if action == "search" else 10):
+    if count >= (60 if action == "search" else 30 if action.startswith("chat.") else 10):
         raise HTTPException(429, "Too many requests; please wait before trying again")
     if action == "friend.request":
         day = (current - timedelta(days=1)).isoformat()
@@ -195,6 +195,16 @@ def serialize(conn: sqlite3.Connection, row: sqlite3.Row, user_id: str) -> dict:
                 result.update(state="available", title=task["title"], href=f"#/collab/project/{task['project_id']}")
             except HTTPException:
                 pass
+    if row["kind"] in {"chat.mention", "chat.reply", "meeting.scheduled", "meeting.updated"}:
+        from backend.discussions import channel_href, message_detail, meeting_detail, scope_access
+        try:
+            subject, _ = (message_detail if row["kind"].startswith("chat.") else meeting_detail)(conn, row["subject_id"], user_id)
+            scope, _ = scope_access(conn, subject["scope_kind"], subject["scope_id"], user_id)
+            if row["kind"].startswith("chat.") and (subject["deleted_at"] or is_blocked(conn, subject["author_id"], user_id)):
+                raise HTTPException(404, "Message unavailable")
+            result.update(state="available", title=scope["name"], href=channel_href(subject["scope_kind"], subject["scope_id"], "discussion" if row["kind"].startswith("chat.") else "meetings"))
+        except HTTPException:
+            result.update(state="unavailable", actor=None, title="", href=None)
     return result
 
 

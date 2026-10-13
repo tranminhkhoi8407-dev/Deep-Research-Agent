@@ -29,6 +29,7 @@ build/
 # Reports (generated at runtime)
 reports/
 data/
+tmp/
 *.db
 *.sqlite
 *.sqlite3

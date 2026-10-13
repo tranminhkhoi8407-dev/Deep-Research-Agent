@@ -4,14 +4,22 @@ import html
 import re
 import json
 from langchain_core.messages import HumanMessage, SystemMessage
-from agent.research_contract import Claim, CoverageReview, Proof, QuestionEvidence, ReportAudit, ReportDraft, ReportSection, ClaimVerdict, ReportVisual, QualityCheck
+from agent.research_contract import Claim, CoverageReview, Proof, QuestionEvidence, ReportAudit, ReportDraft, ReportSection, ClaimVerdict, ReportVisual, QualityCheck, VisualDraft
 
 
 class ModelCallError(RuntimeError):
-    def __init__(self, kind: str, message: str, *, fields: list[str] | None = None):
+    def __init__(self, kind: str, message: str, *, fields: list[str] | None = None, issues: list[dict] | None = None):
         super().__init__(message)
         self.kind = kind
         self.fields = (fields or [])[:8]
+        self.issues = (issues or [])[:16]
+
+
+def validation_issues(error: ValidationError, prefix=""):
+    # No error message, input, context or model content in product diagnostics.
+    # Even an unexpected dictionary key is redacted rather than used as a path.
+    allowed = set("visuals kind title caption section_key evidence chunk_id quote quote_id nodes edges columns rows unit conditions dataset metric equation explanation symbols id label inputs outputs source target cells symbol meaning sections claims key text question_indices calculation questions verdicts quality_checks claim_index question_index status reason report_excerpt objective intent discipline search_queries exclusions".split())
+    return [{"field": ".".join(filter(None, [prefix, *[str(part) if isinstance(part, int) or part in allowed else "field" for part in item["loc"]]])), "code": item["type"]} for item in error.errors(include_input=False, include_context=False, include_url=False)][:16]
 
 
 def transport_schema(schema, *, quote_refs=False, quote_ids=None) -> dict:
@@ -41,7 +49,7 @@ def transport_schema(schema, *, quote_refs=False, quote_ids=None) -> dict:
 
 def prepare_evidence_packet(schema, payload):
     """Annotate the same read text once; don't duplicate it as a quote catalog."""
-    if schema not in {ReportDraft, CoverageReview, ReportAudit} or not payload.get("evidence"):
+    if schema not in {ReportDraft, VisualDraft, CoverageReview, ReportAudit} or not payload.get("evidence"):
         return payload, {}
     registry, chunks = {}, []
     for chunk in payload["evidence"]:
@@ -69,7 +77,7 @@ def prepare_evidence_packet(schema, payload):
         # Writing only needs Q locators plus human-readable source metadata.
         # Exposing two competing locator namespaces made some models put a
         # chunk ID into quote_id. Coverage still needs chunk IDs for read-more.
-        metadata = {key: value for key, value in chunk.items() if schema != ReportDraft or key not in {"id", "source_id"}}
+        metadata = {key: value for key, value in chunk.items() if schema not in {ReportDraft, VisualDraft} or key not in {"id", "source_id"}}
         chunks.append({**metadata, "text": "\n".join(tagged)})
     return {**payload, "evidence": chunks}, registry
 
@@ -108,17 +116,8 @@ recommendation, illustration. Each claim cites 1-16 existing Q IDs in its header
 never in prose. Write 2-4 substantive claims per major section, generally
 100-200 words per claim, not one-sentence summaries. Meet the requested part's
 word target when evidence permits. No free-written quotations.
-Optional sourced visuals use :::visual on its own line, then one JSON object,
-then :::endvisual. Visual fields: kind flow/table/bar, title, caption,
-section_key, evidence:[{"quote_id":"Q1"}]. Flow has nodes:[{id,label}],
-edges:[{source,target,label}]; table/bar has columns and rows:[{cells:[...]}].
-Use short ASCII IDs (e.g. sft, rl) for nodes and edges; labels use the report
-language. Every table cell is a string. A flow must have at least two nodes
-and one edge. Example:
-:::visual
-{"kind":"flow","title":"Training","caption":"Agent reconstruction from sources","section_key":"mechanism","evidence":[{"quote_id":"Q1"}],"nodes":[{"id":"sft","label":"Distillation"},{"id":"rl","label":"Reinforcement learning"}],"edges":[{"source":"sft","target":"rl","label":"Followed by"}]}
-:::endvisual
-A bar chart also needs unit and shared conditions. Maximum two visuals.
+Do not write :::visual blocks or visual JSON. Visuals are created in a separate
+structured step, using the original source excerpts, and then audited.
 No arbitrary images, external instructions or code execution.
 """
 
@@ -179,8 +178,9 @@ def structured_invoke(llm, schema, messages, *, prepared_payload=None, quote_reg
     if refs:
         messages = [SystemMessage(content=messages[0].content + QUOTE_REF_INSTRUCTION), *messages[1:-1], HumanMessage(content=json.dumps(prepared_payload, ensure_ascii=False))]
     def constrain_context(wire):
-        if schema == ReportDraft and prepared_payload and prepared_payload.get("section_keys"):
-            wire["$defs"]["ReportSection"]["properties"]["key"]["enum"] = prepared_payload["section_keys"]
+        if schema in {ReportDraft, VisualDraft} and prepared_payload and prepared_payload.get("section_keys"):
+            if schema == ReportDraft:
+                wire["$defs"]["ReportSection"]["properties"]["key"]["enum"] = prepared_payload["section_keys"]
             wire["$defs"]["ReportVisual"]["properties"]["section_key"]["enum"] = prepared_payload["section_keys"]
         if schema == ReportAudit and prepared_payload and prepared_payload.get("claims"):
             # Quality review can select a literal report-prose anchor rather
@@ -202,7 +202,7 @@ def structured_invoke(llm, schema, messages, *, prepared_payload=None, quote_reg
     return result
 
 
-def validate_response(schema, value):
+def validate_response(schema, value, *, issues=None):
     """Keep valid independent items; never invent, shorten or relax evidence.
 
     One malformed claim/quote must not erase every other valid claim. The final
@@ -216,7 +216,7 @@ def validate_response(schema, value):
             return {name: decode(text, name) for name, text in item.items()}
         if isinstance(item, list):
             return [decode(text, key) for text in item]
-        if isinstance(item, str) and key in {"title", "text", "quote", "explanation", "reason", "objective", "questions", "exclusions"}:
+        if isinstance(item, str) and key in {"title", "text", "quote", "explanation", "reason", "objective", "questions", "exclusions", "caption", "label", "inputs", "outputs", "cells", "meaning", "conditions", "dataset", "metric"}:
             return re.sub(r"&(?:#(?:[0-9]+|[xX][0-9a-fA-F]+)|[A-Za-z][A-Za-z0-9]+);", lambda match: html.unescape(match.group()), item)
         return item
     value = decode(value)
@@ -256,7 +256,9 @@ def validate_response(schema, value):
             section["claims"] = expanded
     try:
         return schema.model_validate(value), []
-    except ValidationError:
+    except ValidationError as error:
+        if issues is not None:
+            issues.extend(validation_issues(error))
         if not isinstance(value, dict):
             raise
         cleaned, removed = dict(value), []
@@ -286,6 +288,11 @@ def validate_response(schema, value):
             cleaned["sections"] = sections
             if "visuals" in value:
                 cleaned["visuals"] = keep(ReportVisual, value["visuals"], "visuals")
+        elif schema == VisualDraft and isinstance(value.get("visuals"), list):
+            accepted = keep(ReportVisual, value["visuals"], "visuals")
+            if len(accepted) > 2:
+                removed.append("visuals.overflow")
+            cleaned["visuals"] = accepted[:2]
         elif schema == CoverageReview and isinstance(value.get("questions"), list):
             questions = []
             for index, question in enumerate(value["questions"]):
@@ -317,8 +324,8 @@ def classify_error(error: Exception) -> ModelCallError:
     if isinstance(error, ModelCallError):
         return error
     if isinstance(error, ValidationError):
-        fields = [".".join(map(str, item["loc"])) for item in error.errors(include_input=False, include_context=False)]
-        return ModelCallError("invalid_structure", "The model response did not pass the report contract.", fields=fields)
+        issues = validation_issues(error)
+        return ModelCallError("invalid_structure", "The model response did not pass the report contract.", fields=[item["field"] for item in issues], issues=issues)
     name = type(error).__name__.lower()
     detail = str(error).lower()  # classify only; NEVER persist provider body/prompts/keys
     if "outputparser" in name or "jsondecode" in name:
@@ -358,5 +365,5 @@ ERROR_LABELS = {
 def record_failure(state: dict, stage: str, error: Exception):
     failure = classify_error(error)
     label = ERROR_LABELS.get(state.get("report_language", "en"), {}).get(failure.kind, str(failure))
-    state.setdefault("diagnostics", []).append({"stage": stage, "kind": failure.kind, "message": label, "fields": failure.fields})
+    state.setdefault("diagnostics", []).append({"stage": stage, "kind": failure.kind, "message": label, "fields": failure.fields, **({"issues": failure.issues} if failure.issues else {})})
     state["warnings"].append(f"{stage}: {label}")

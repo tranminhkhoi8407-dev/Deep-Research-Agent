@@ -1,0 +1,181 @@
+.collab-dashboard.collab-dashboard--groups {
+  grid-template-columns: minmax(0, 1fr) 330px;
+}
+.collab-dashboard--groups > .collab-card {
+  min-width: 0;
+}
+.group-space {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 26px;
+  border-top: 1px solid var(--line, #d8e1ed);
+  margin-top: 28px;
+  padding-top: 24px;
+  text-align: left;
+}
+.group-space > aside {
+  min-width: 0;
+  border-right: 1px solid var(--line, #d8e1ed);
+  padding-right: 20px;
+}
+.group-space > aside h3 {
+  margin: 0 0 10px;
+  overflow-wrap: anywhere;
+}
+.group-space > aside p {
+  font-size: 0.83rem;
+  line-height: 1.7;
+  opacity: 0.7;
+  overflow-wrap: anywhere;
+}
+.group-space nav {
+  display: grid;
+  gap: 6px;
+  margin-top: 20px;
+}
+.group-space nav button {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: flex-start !important;
+  text-align: left;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.group-space nav button svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+.group-space nav button.is-active {
+  background: #3386ee22;
+  color: var(--ink);
+  font-weight: 600;
+}
+.group-space-content {
+  min-width: 0;
+}
+.group-space-content h2 {
+  font-size: 1.35rem;
+}
+.group-space-content > div[hidden] {
+  display: none;
+}
+.group-space button:focus-visible {
+  outline: 2px solid #4b97ff;
+  outline-offset: 3px;
+}
+.group-space .discussion-toolbar > button,
+.group-space .meeting-form > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  min-height: 42px;
+  border: 1px solid var(--action-fill, #2169ee);
+  border-radius: 8px;
+  background: var(--action-fill, #2169ee);
+  color: var(--on-action, #fff);
+  font: inherit;
+  cursor: pointer;
+}
+.group-space .discussion-toolbar > button:hover,
+.group-space .meeting-form > button:hover {
+  background: var(--action-hover, #195ad5);
+}
+.group-project-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+}
+.group-project-list > button {
+  display: flex !important;
+  align-items: center;
+  justify-content: flex-start !important;
+  gap: 14px;
+  width: 100%;
+  border: 1px solid var(--line, #d8e1ed);
+  border-radius: 12px;
+  padding: 18px !important;
+  background: #4b97ff08;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.group-project-list > button > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.group-project-list strong,
+.group-project-list small {
+  overflow-wrap: anywhere;
+}
+.group-project-list small {
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+.group-project-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  background: #4b97ff20;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+.group-project-list > button > svg {
+  flex: 0 0 auto;
+}
+@media (max-width: 1250px) {
+  .collab-dashboard.collab-dashboard--groups {
+    grid-template-columns: 1fr;
+  }
+  .group-space {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .group-space {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .group-space > aside {
+    border-right: 0;
+    border-bottom: 1px solid var(--line, #d8e1ed);
+    padding: 0 0 15px;
+  }
+  .group-space nav {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .collab-hub:has(.collab-dashboard--groups) {
+    padding-inline: 10px;
+  }
+  .collab-dashboard.collab-dashboard--groups > .collab-card {
+    padding: 14px;
+  }
+  .group-space nav button {
+    padding: 10px 7px;
+    font-size: 0.8rem;
+  }
+  .group-space .meeting-card {
+    padding: 14px;
+  }
+  .group-space .meeting-card > header > span {
+    margin-left: 0;
+  }
+  .group-space .meeting-form,
+  .group-space .discussion-composer {
+    padding: 12px;
+  }
+}

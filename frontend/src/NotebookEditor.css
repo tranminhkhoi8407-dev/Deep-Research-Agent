@@ -12,16 +12,18 @@
 .notebook-action-caption { padding: 6px 13px; font-size: 11px; color: var(--muted); }
 .notebook-action-metadata { display: flex; flex-direction: column; gap: 7px; padding: 11px 13px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .bn-drag-handle-menu .bn-menu-item { display: flex; align-items: center; gap: 10px; }
-.notebook-page-reference { display: flex; align-items: center; width: 100%; min-height: 37px; border-radius: 5px; color: var(--ink); background: color-mix(in srgb, var(--ink) 11%, var(--surface)); transition: background .16s ease; }
-.notebook-page-reference:hover, .notebook-page-reference:focus-within { background: color-mix(in srgb, var(--ink) 17%, var(--surface)); }
-.notebook-page-reference > a { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 6px 10px; color: inherit; text-decoration: none; }
+.notebook-page-reference { display: flex; align-items: center; box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: color-mix(in srgb, var(--blue) 2%, var(--surface)); transition: background .16s ease, border-color .16s ease; }
+.notebook-page-reference:hover, .notebook-page-reference:focus-within { background: color-mix(in srgb, var(--blue) 5%, var(--surface)); border-color: color-mix(in srgb, var(--blue) 30%, var(--line)); }
+.notebook-page-reference > a { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 8px 11px; color: inherit; text-decoration: none; }
 .notebook-page-reference > a span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.notebook-page-reference > a svg { flex: none; }
-.notebook-page-reference > button { display: grid; place-items: center; flex: none; width: 32px; height: 31px; margin-right: 3px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; opacity: .8; cursor: pointer; }
-.notebook-page-reference > button:hover, .notebook-page-reference > button:focus-visible { background: color-mix(in srgb, var(--ink) 12%, transparent); opacity: 1; }
+.notebook-page-reference > a svg { flex: none; box-sizing: content-box; padding: 4px; border-radius: 6px; color: var(--blue); background: var(--blue-soft); }
+.notebook-page-reference > button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; margin-right: 7px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; transition: background .16s ease, color .16s ease; }
+.notebook-page-reference > button:hover, .notebook-page-reference > button:focus-visible { background: var(--blue-soft); color: var(--blue); }
 .notebook-page-reference > a:focus-visible, .notebook-page-reference > button:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
-.notebook-page-reference.has-custom-color, .notebook-page-reference.has-custom-color:hover { background: transparent; }
+.notebook-page-reference.has-custom-color, .notebook-page-reference.has-custom-color:hover, .notebook-page-reference.has-custom-color:focus-within { background: transparent; }
+.notebook-page-reference.has-custom-color > a svg { background: transparent; }
 .notebook-page-reference.has-custom-text-color { color: inherit; }
+.notebook-page-reference.has-custom-text-color > a svg { color: inherit; }
 .notebook-page-emoji { display: inline-flex; align-items: center; justify-content: center; flex: none; min-width: 1em; }
 .bn-mantine .bn-menu-dropdown.bn-drag-handle-menu { min-width: 300px; max-width: min(330px, calc(100vw - 20px)); max-height: min(650px, 85dvh); overflow-y: auto; border-radius: 9px; padding: 5px; }
 .bn-mantine .bn-menu-dropdown.bn-drag-handle-menu .bn-menu-item { min-height: 32px; padding: 5px 10px; font-size: 14px; line-height: 1.4; border-radius: 4px; }
@@ -32,4 +34,4 @@
 .notebook-action-search input { font-size: 14px; }
 .notebook-action-caption { font-size: 12px; font-weight: 600; padding: 5px 10px; }
 .notebook-action-metadata { font-size: 12px; padding: 9px 10px; }
-@media (prefers-reduced-motion: reduce) { .notebook-page-reference { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .notebook-page-reference, .notebook-page-reference > button { transition: none; } }

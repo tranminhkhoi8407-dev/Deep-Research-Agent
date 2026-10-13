@@ -35,6 +35,7 @@ try {
   const groupId = 'e'.repeat(32), groupHash = '#/collab/group/' + groupId;
   for (const language of ['vi', 'en']) {
     const archivePage = await newPage(`?groups=1&groupRole=owner&lang=${language}&theme=${language === 'vi' ? 'dark' : 'light'}`, groupHash);
+    await archivePage.getByRole('navigation', { name: language === 'vi' ? 'Tiện ích nhóm' : 'Group tools' }).getByRole('button', { name: language === 'vi' ? 'Thành viên & cài đặt' : 'Members & settings', exact: true }).click();
     const archiveName = language === 'vi' ? 'Lưu trữ nhóm' : 'Archive group';
     const archiveButton = archivePage.getByRole('button', { name: archiveName, exact: true });
     const confirmation = archivePage.getByRole('dialog', { name: archiveName, exact: true });
@@ -64,6 +65,7 @@ try {
     await archivePage.locator('.collab-management').waitFor({ state: 'hidden' });
     assert.equal(await archiveRequests(), 0, 'Leaving the group view cancels a pending confirmation');
     await archivePage.evaluate(hash => { location.hash = hash; }, groupHash);
+    await archivePage.getByRole('navigation', { name: language === 'vi' ? 'Tiện ích nhóm' : 'Group tools' }).getByRole('button', { name: language === 'vi' ? 'Thành viên & cài đặt' : 'Members & settings', exact: true }).click();
     await archiveButton.waitFor();
     await archiveButton.click();
     await archivePage.setViewportSize({ width: 390, height: 750 });
@@ -85,6 +87,7 @@ try {
     await archivePage.context().close();
   }
   const membership = await newPage('?groups=1&groupRole=owner', groupHash);
+  await membership.getByRole('navigation', { name: 'Tiện ích nhóm' }).getByRole('button', { name: 'Thành viên & cài đặt', exact: true }).click();
   await membership.getByTitle('Xóa khỏi nhóm', { exact: true }).click();
   const removeDialog = membership.getByRole('dialog', { name: 'Xóa thành viên khỏi nhóm', exact: true });
   await removeDialog.getByRole('button', { name: 'Hủy', exact: true }).click();
@@ -95,6 +98,7 @@ try {
   assert.equal(await membership.evaluate(() => window.projectQA.requests.filter(request => request.path.endsWith('/transfer')).length), 0);
   await membership.context().close();
   const memberPage = await newPage('?groups=1&groupRole=member&lang=en', groupHash);
+  await memberPage.getByRole('navigation', { name: 'Group tools' }).getByRole('button', { name: 'Members & settings', exact: true }).click();
   assert.equal(await memberPage.getByRole('button', { name: 'Archive group', exact: true }).count(), 0);
   await memberPage.getByRole('button', { name: 'Leave group', exact: true }).click();
   await memberPage.getByRole('dialog', { name: 'Leave group', exact: true }).getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -157,6 +161,7 @@ try {
     await layout.context().close();
   }
   const groupPage = await newPage('?groups=1&lang=en', '#/collab/group/' + 'e'.repeat(32));
+  await groupPage.getByRole('navigation', { name: 'Group tools' }).getByRole('button', { name: 'Members & settings', exact: true }).click();
   const createForm = groupPage.getByRole('form', { name: 'Create a new group', exact: true });
   await createForm.waitFor();
   assert.ok((await groupPage.locator('.collab-group-list').innerText()).includes('2 members'));
@@ -185,6 +190,7 @@ try {
   await groupPage.getByText('Created “New lab”. You can invite members below.', { exact: true }).waitFor();
   assert.equal(await groupName.inputValue(), '');
   assert.equal(await groupPage.locator('.collab-group-list > button').count(), 2);
+  await groupPage.getByRole('navigation', { name: 'Group tools' }).getByRole('button', { name: 'Members & settings', exact: true }).click();
   assert.equal(await groupPage.locator('.collab-group-detail .collab-management input').first().inputValue(), 'New lab', 'New group details must not show the old selected group draft');
   assert.equal(await groupPage.evaluate(() => window.projectQA.requests.filter(request => request.path === '/groups' && request.method === 'POST').length), 2, 'One failed attempt and one successful attempt; double submit must not create two groups');
   const payload = await groupPage.evaluate(() => window.projectQA.requests.filter(request => request.path === '/groups' && request.method === 'POST').at(-1).body);

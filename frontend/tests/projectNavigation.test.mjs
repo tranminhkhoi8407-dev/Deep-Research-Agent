@@ -13,7 +13,7 @@ const project = 'a'.repeat(32), page = 'b'.repeat(32), child = 'c'.repeat(32);
 
 test('project tools preserve the editor page in their route and direct page links still work', () => {
   assert.deepEqual(projectWorkspaceRoute(projectHash(project)), { projectId: project, pageId: null, pane: 'overview' });
-  for (const pane of ['overview', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived']) {
+  for (const pane of ['overview', 'discussion', 'meetings', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived']) {
     assert.deepEqual(projectWorkspaceRoute(projectHash(project, pane, page)), { projectId: project, pageId: page, pane });
   }
   assert.deepEqual(projectWorkspaceRoute(projectHash(project, 'pages', page)), { projectId: null, pageId: page, pane: 'pages' });
@@ -27,7 +27,7 @@ test('routes reject foreign URLs, malformed ids, duplicate or unknown parameters
 });
 test('a page-only grant cannot show project tools; managers alone see settings and trash', () => {
   assert.equal(projectPaneAllowed('pages', 0), true);
-  for (const pane of ['overview', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived']) assert.equal(projectPaneAllowed(pane, 0), false);
+  for (const pane of ['overview', 'discussion', 'meetings', 'tasks', 'evidence', 'members', 'activity', 'settings', 'archived']) assert.equal(projectPaneAllowed(pane, 0), false);
   for (const pane of ['overview', 'tasks', 'evidence', 'members', 'activity']) assert.equal(projectPaneAllowed(pane, 1), true);
   for (const pane of ['settings', 'archived']) {
     assert.equal(projectPaneAllowed(pane, 3), false);

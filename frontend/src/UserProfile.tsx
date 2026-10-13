@@ -28,6 +28,8 @@ import {
   X,
 } from 'lucide-react';
 import { displayName, type AuthUser } from './Auth';
+import { LoginSessionSettings } from './LoginSession';
+import type { LoginSession } from './authSession';
 import type { AppView, Language, StoredReportSummary } from './ProductViews';
 
 interface UserProfileProps {
@@ -37,6 +39,8 @@ interface UserProfileProps {
   reports: StoredReportSummary[];
   nameRequired?: boolean;
   editRequest?: number;
+  loginSession?: LoginSession | null;
+  onLoginSessionChange?: (remember: boolean) => Promise<void>;
   onNavigate: (view: AppView) => void;
   onOpenReport: (report: StoredReportSummary) => void;
   onUserUpdate: (user: AuthUser) => void;
@@ -152,7 +156,7 @@ function profileDraft(user: AuthUser): ProfileDraft {
   };
 }
 
-export function UserProfile({ apiBase, language, user, reports, nameRequired = false, editRequest = 0, onNavigate, onOpenReport, onUserUpdate, onNotify }: UserProfileProps) {
+export function UserProfile({ apiBase, language, user, reports, nameRequired = false, editRequest = 0, loginSession, onLoginSessionChange, onNavigate, onOpenReport, onUserUpdate, onNotify }: UserProfileProps) {
   const t = copy[language];
   const name = displayName(user);
   const [avatarFailed, setAvatarFailed] = useState(false);
@@ -338,6 +342,7 @@ export function UserProfile({ apiBase, language, user, reports, nameRequired = f
           <section className="profile-account-card">
             <div><ShieldCheck size={18} /><h3>{t.account}</h3></div>
             <dl><div><dt>{t.provider}</dt><dd>{user.provider}</dd></div><div><dt>{t.plan}</dt><dd>{user.license_type}</dd></div><div><dt>{t.status}</dt><dd className="is-active"><i />{t.active}</dd></div></dl>
+            {loginSession && onLoginSessionChange && <LoginSessionSettings key={user.id} language={language} session={loginSession} onSave={onLoginSessionChange} />}
           </section>
         </aside>
 

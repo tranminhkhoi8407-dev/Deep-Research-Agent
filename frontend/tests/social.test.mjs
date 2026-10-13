@@ -17,6 +17,10 @@ test('friend actions distinguish received, sent and accepted relationships', () 
 test('only allowlisted internal destinations can be opened by a notification', () => {
   for (const kind of ['project', 'page', 'group']) assert.equal(safeSocialHref(`#/collab/${kind}/${'a'.repeat(32)}`), `#/collab/${kind}/${'a'.repeat(32)}`);
   assert.equal(safeSocialHref('#/collab/people'), '#/collab/people');
+  for (const kind of ['project', 'group']) for (const view of ['discussion', 'meetings']) {
+    const href = `#/collab/${kind}/${'a'.repeat(32)}?view=${view}`; assert.equal(safeSocialHref(href), href);
+  }
+  for (const href of [`#/collab/page/${'a'.repeat(32)}?view=discussion`, `#/collab/group/${'a'.repeat(32)}?view=discussion&redirect=x`, `#/collab/group/${'a'.repeat(32)}?view=discussion&view=meetings`]) assert.equal(safeSocialHref(href), null);
   for (const href of [null, 'https://evil.example', 'javascript:alert(1)', '//example.com', '#/admin', '#/collab/project/123', '#/collab/page/' + 'a'.repeat(32) + '?redirect=1']) assert.equal(safeSocialHref(href), null);
 });
 
@@ -34,6 +38,7 @@ test('notification text and role descriptions work in Vietnamese and English', (
   assert.equal(roleLabel('editor', true), 'Có thể chỉnh sửa');
   assert.equal(roleLabel('viewer', false), 'Can view');
   assert.equal(roleLabel(null, true), '');
+  for (const kind of ['chat.mention', 'chat.reply', 'meeting.scheduled', 'meeting.updated']) for (const vi of [true, false]) assert.match(notificationText({ ...item, state: 'available', kind, title: 'Lab' }, vi), /Khôi.*Lab/);
 });
 
 test('relative times handle future timestamps and invalid dates safely', () => {

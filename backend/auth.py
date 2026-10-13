@@ -9,14 +9,16 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
+from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from backend.accounts import (
     get_user,
@@ -29,6 +31,7 @@ from backend.accounts import (
 )
 from backend.schemas import ProfileUpdateRequest
 from backend.identity import validate_public_name
+from backend.sessions import REMEMBERED_SECONDS, SESSION_ONLY_SECONDS
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -41,6 +44,68 @@ class OnboardingUpdate(BaseModel):
     version: Literal[1] = 1
     step_index: int = Field(ge=0, le=30)
     status: Literal["dismissed", "in_progress", "completed"]
+
+
+class SessionChoice(BaseModel):
+    remember: StrictBool
+
+
+def _start_login_session(request: Request, profile: dict[str, Any]) -> None:
+    # Only a successfully authenticated login receives a persistent cookie.
+    request.session.clear()
+    request.session.update({
+        "user": profile,
+        "remember": True,
+        "login_choice_pending": False,
+        "expires_at": int(time.time()) + REMEMBERED_SECONDS,
+    })
+
+
+def _upgrade_pending_login_session(request: Request) -> None:
+    """Retire the old prompt once, without overriding an explicit opt-out.
+
+    Called only after /me has validated an active, authenticated account. Do
+    not renew already remembered sessions on ordinary reads.
+    """
+    if request.session.get("login_choice_pending") is not True:
+        return
+    if request.session.get("remember") is not True or type(request.session.get("expires_at")) is not int:
+        request.session["remember"] = True
+        request.session["expires_at"] = int(time.time()) + REMEMBERED_SECONDS
+    request.session["login_choice_pending"] = False
+
+
+def _session_info(request: Request) -> dict[str, Any]:
+    expiry = request.session.get("expires_at")
+    return {
+        "remembered": request.session.get("remember") is True,
+        "choice_pending": request.session.get("login_choice_pending") is True,
+        "expires_at": datetime.fromtimestamp(expiry, tz=timezone.utc).isoformat() if type(expiry) is int else None,
+        "persistent_days": REMEMBERED_SECONDS // 86400,
+        "session_hours": SESSION_ONLY_SECONDS // 3600,
+    }
+
+
+def _check_session_change(request: Request) -> None:
+    # Forms cannot send this header. Cross-origin scripts require CORS approval.
+    if request.headers.get("X-Nexora-Session-Intent") != "update":
+        raise HTTPException(403, detail="Session changes require an explicit request")
+    origin = request.headers.get("origin")
+    if origin is not None:
+        def normalized(value: str) -> tuple[str, str] | None:
+            try:
+                parsed = urlsplit(value)
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+                    return None
+                if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+                    return None
+                return parsed.scheme.lower(), parsed.netloc.lower()
+            except ValueError:
+                return None
+        allowed = [str(request.base_url), _frontend_url(), *os.getenv("CORS_ORIGINS", "").split(",")]
+        resolved = normalized(origin)
+        if resolved is None or resolved not in {normalized(value.strip()) for value in allowed if value.strip()}:
+            raise HTTPException(403, detail="Untrusted session change origin")
 
 
 def _truthy(name: str, default: bool = False) -> bool:
@@ -171,7 +236,8 @@ def current_user(request: Request) -> dict[str, Any]:
         request.session.clear()
         raise HTTPException(status_code=403, detail="This account has been suspended")
     profile = _session_profile(persisted)
-    request.session["user"] = profile
+    if request.session.get("user") != profile:
+        request.session["user"] = profile
     return profile
 
 
@@ -211,9 +277,27 @@ async def auth_me(request: Request):
         else:
             persisted = synchronize_configured_role(persisted)
         profile = _session_profile(persisted)
-        request.session["user"] = profile
-        return {"authenticated": True, "user": profile}
+        if request.session.get("user") != profile:
+            request.session["user"] = profile
+        _upgrade_pending_login_session(request)
+        return {"authenticated": True, "user": profile, "session": _session_info(request)}
     return {"authenticated": False, "user": None}
+
+
+@router.put("/session")
+async def choose_login_persistence(payload: SessionChoice, request: Request):
+    _check_session_change(request)
+    user = current_user(request)
+    previous = request.session.get("remember") is True
+    pending = request.session.get("login_choice_pending") is True
+    if previous != payload.remember or type(request.session.get("expires_at")) is not int:
+        duration = REMEMBERED_SECONDS if payload.remember else SESSION_ONLY_SECONDS
+        request.session["expires_at"] = int(time.time()) + duration
+    request.session["remember"] = payload.remember
+    request.session["login_choice_pending"] = False
+    if pending or previous != payload.remember:
+        log_admin_action(user["id"], "auth.session_preference", "session", detail={"remember": payload.remember})
+    return {"session": _session_info(request)}
 
 
 @router.get("/profile")
@@ -304,11 +388,13 @@ async def profile_update(payload: ProfileUpdateRequest, request: Request):
 
 
 @router.get("/login/{provider}")
-async def oauth_login(provider: str, request: Request, remember: bool = False):
+async def oauth_login(provider: str, request: Request):
     provider = provider.lower()
     client = _oauth_client(provider)
     redirect_uri = f"{_backend_url()}/api/auth/callback/{provider}"
-    request.session["remember"] = remember
+    # Anonymous OAuth state stays session-only until authentication succeeds.
+    # Starting (or failing) another OAuth flow must not demote an existing login.
+    request.session.setdefault("remember", False)
     return await client.authorize_redirect(request, redirect_uri)
 
 
@@ -316,7 +402,6 @@ async def oauth_login(provider: str, request: Request, remember: bool = False):
 async def oauth_callback(provider: str, request: Request):
     provider = provider.lower()
     try:
-        remember = request.session.get("remember") is True
         client = _oauth_client(provider)
         token = await client.authorize_access_token(request)
 
@@ -347,9 +432,7 @@ async def oauth_callback(provider: str, request: Request):
         if user.get("status") == "suspended":
             return _auth_redirect("Tài khoản này đã bị tạm khóa bởi host.")
         profile = _session_profile(user)
-        request.session.clear()
-        request.session["user"] = profile
-        request.session["remember"] = remember
+        _start_login_session(request, profile)
         log_admin_action(profile["id"], "auth.login", "session", detail={"provider": provider})
         return _auth_redirect()
     except HTTPException:
@@ -361,7 +444,7 @@ async def oauth_callback(provider: str, request: Request):
 
 
 @router.post("/dev-login")
-async def development_login(request: Request, remember: bool = False):
+async def development_login(request: Request):
     if not dev_login_enabled():
         raise HTTPException(status_code=404, detail="Development login is disabled")
     user = register_login({
@@ -373,11 +456,9 @@ async def development_login(request: Request, remember: bool = False):
         "username": "local-researcher",
     })
     profile = _session_profile(user)
-    request.session.clear()
-    request.session["user"] = profile
-    request.session["remember"] = remember
+    _start_login_session(request, profile)
     log_admin_action(profile["id"], "auth.login", "session", detail={"provider": "local"})
-    return {"authenticated": True, "user": profile}
+    return {"authenticated": True, "user": profile, "session": _session_info(request)}
 
 
 @router.post("/logout")

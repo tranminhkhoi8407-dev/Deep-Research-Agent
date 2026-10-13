@@ -66,8 +66,8 @@ interface LoginPageProps {
   providers: AuthProviders;
   busy: boolean;
   error: string;
-  onOAuth: (provider: 'google' | 'github', remember: boolean) => void;
-  onDevelopmentLogin: (remember: boolean) => void;
+  onOAuth: (provider: 'google' | 'github') => void;
+  onDevelopmentLogin: () => void;
   onOpenInformation: (view: InformationView) => void;
 }
 
@@ -99,7 +99,7 @@ const copy = {
     unavailable: 'Chưa cấu hình',
     setupTitle: 'OAuth đang chờ cấu hình',
     setupBody: 'Thêm Client ID và Client Secret vào .env để bật nhà cung cấp tương ứng.',
-    legal: 'Khi tiếp tục, bạn đồng ý sử dụng tài khoản này cho phiên nghiên cứu trên thiết bị hiện tại.',
+    legal: 'Đăng nhập được tự ghi nhớ tối đa 30 ngày. Hãy đăng xuất khi dùng xong trên máy dùng chung. Nexora không lưu mật khẩu Google/GitHub.',
     footer: 'Nexora · Multi-agent evidence workspace',
     loading: 'Đang mở phiên…',
   },
@@ -130,10 +130,7 @@ const copy = {
     unavailable: 'Not configured',
     setupTitle: 'OAuth is waiting for setup',
     setupBody: 'Add the Client ID and Client Secret to .env to enable each provider.',
-    legal: 'By continuing, you agree to use this account for research sessions on this device.',
-    rememberTitle: 'Keep me signed in',
-    rememberHint: 'Remember this account for up to 30 days on this device.',
-    sessionHint: 'Leave this off to sign out when the browser session ends.',
+    legal: 'Sign-in is automatically remembered for up to 30 days. Sign out when finished on shared devices. Nexora does not store Google/GitHub passwords.',
     footer: 'Nexora · Multi-agent evidence workspace',
     loading: 'Opening session…',
   },
@@ -158,7 +155,6 @@ export function LoginPage({
   onDevelopmentLogin,
   onOpenInformation,
 }: LoginPageProps) {
-  const [remember, setRemember] = useState(false);
   const t = copy.en;
   const assuranceIcons = [SearchCheck, UsersRound, FileCheck2, ShieldCheck];
   const anyProvider = providers.google || providers.github;
@@ -219,28 +215,14 @@ export function LoginPage({
 
           {error && <div className="auth-alert" role="alert">{error}</div>}
 
-          <label className="remember-choice">
-            <input
-              type="checkbox"
-              checked={remember}
-              disabled={busy}
-              onChange={(event) => setRemember(event.target.checked)}
-            />
-            <span className="remember-check" aria-hidden="true">{remember && <Check size={14} />}</span>
-            <span className="remember-copy">
-              <strong>{t.rememberTitle}</strong>
-              <small>{remember ? t.rememberHint : t.sessionHint}</small>
-            </span>
-          </label>
-
           <div className="oauth-buttons">
-            <button type="button" disabled={busy || !providers.google} onClick={() => onOAuth('google', remember)}>
+            <button type="button" disabled={busy || !providers.google} onClick={() => onOAuth('google')}>
               <GoogleMark />
               <span>{t.google}</span>
               {!providers.google && <em>{t.unavailable}</em>}
               {providers.google && <ArrowRight size={17} />}
             </button>
-            <button type="button" disabled={busy || !providers.github} onClick={() => onOAuth('github', remember)}>
+            <button type="button" disabled={busy || !providers.github} onClick={() => onOAuth('github')}>
               <Github size={21} />
               <span>{t.github}</span>
               {!providers.github && <em>{t.unavailable}</em>}
@@ -258,7 +240,7 @@ export function LoginPage({
           {providers.dev_login && (
             <>
               <div className="auth-divider"><span>{t.or}</span></div>
-              <button className="dev-login-button" type="button" disabled={busy} onClick={() => onDevelopmentLogin(remember)}>
+              <button className="dev-login-button" type="button" disabled={busy} onClick={onDevelopmentLogin}>
                 <CircleUserRound size={20} />
                 <span><strong>{busy ? t.loading : t.local}</strong><small>{t.localHint}</small></span>
                 <ArrowRight size={17} />

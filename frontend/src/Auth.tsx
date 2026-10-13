@@ -477,12 +477,23 @@ export function LoginPage({
 
   const switchView = (next: AuthView) => {
     if (busy || forgotBusy || next === view) return;
+    // Never carry passwords between screens: a password typed (or autofilled)
+    // on one screen must not appear pre-filled on another.
+    setPassword('');
+    setConfirmPassword('');
+    if (next === 'forgot') {
+      setForgotSent(false);
+      if (!email.trim() && EMAIL_RE.test(identifier.trim())) setEmail(identifier.trim());
+    }
+    if (next === 'signin' && !identifier.trim() && EMAIL_RE.test(email.trim())) setIdentifier(email.trim());
+    if (next === 'signup' && !email.trim() && EMAIL_RE.test(identifier.trim())) setEmail(identifier.trim());
     setView(next);
     setFieldErrors({});
     setForgotError('');
     setTouched({ name: false, username: false, identifier: false, email: false, password: false, confirm: false });
     setShowPassword(false);
     setShowConfirm(false);
+    setCapsLock(false);
   };
 
   const clearResetTokenFromUrl = () => {

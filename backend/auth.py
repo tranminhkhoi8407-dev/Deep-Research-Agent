@@ -16,16 +16,24 @@ from urllib.parse import urlencode, urlsplit
 
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field, StrictBool
 
 from backend.accounts import (
+    authenticate_password_account,
+    avatar_file_path,
+    clear_custom_avatar,
+    consume_password_reset_token,
+    create_password_reset_token,
     get_user,
     log_admin_action,
+    register_password_account,
     register_login,
+    resolve_avatar_url,
     list_onboarding_tours,
     save_onboarding_tour,
+    set_custom_avatar,
     synchronize_configured_role,
     update_profile,
 )
@@ -35,6 +43,53 @@ from backend.sessions import REMEMBERED_SECONDS, SESSION_ONLY_SECONDS
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+
+# Lightweight in-memory brute-force guard for email/password endpoints.
+# Production with multiple workers should move this to Redis.
+_CREDENTIAL_ATTEMPTS: dict[str, list[float]] = {}
+_CREDENTIAL_RATE_LIMIT = 20
+_CREDENTIAL_RATE_WINDOW = 600.0
+
+
+def _credential_client_key(request: Request, email: str) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    client = forwarded or (request.client.host if request.client else "unknown")
+    return f"{client}|{(email or '').strip().lower()}"
+
+
+def _check_credential_rate_limit(request: Request, email: str) -> None:
+    now = time.time()
+    key = _credential_client_key(request, email)
+    attempts = [stamp for stamp in _CREDENTIAL_ATTEMPTS.get(key, []) if now - stamp < _CREDENTIAL_RATE_WINDOW]
+    if len(attempts) >= _CREDENTIAL_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many attempts. Please wait a few minutes and try again",
+        )
+    attempts.append(now)
+    _CREDENTIAL_ATTEMPTS[key] = attempts
+
+
+def _clear_credential_rate_limit(request: Request, email: str) -> None:
+    _CREDENTIAL_ATTEMPTS.pop(_credential_client_key(request, email), None)
+
+
+_AVATAR_ATTEMPTS: dict[str, list[float]] = {}
+_AVATAR_RATE_LIMIT = 20
+_AVATAR_RATE_WINDOW = 3600.0
+
+
+def _check_avatar_rate_limit(user_id: str) -> None:
+    now = time.time()
+    attempts = [stamp for stamp in _AVATAR_ATTEMPTS.get(user_id, []) if now - stamp < _AVATAR_RATE_WINDOW]
+    if len(attempts) >= _AVATAR_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many avatar changes. Please try again later",
+        )
+    attempts.append(now)
+    _AVATAR_ATTEMPTS[user_id] = attempts
+
 
 TOUR_STEP_COUNTS = {"core": 8, "research": 4, "fields": 4, "library": 5, "host": 3}
 TourId = Literal["core", "research", "fields", "library", "host"]
@@ -48,6 +103,37 @@ class OnboardingUpdate(BaseModel):
 
 class SessionChoice(BaseModel):
     remember: StrictBool
+
+
+class CredentialLoginRequest(BaseModel):
+    # `identifier` accepts a username or an email address. `email` stays as a
+    # deprecated alias so older clients keep working.
+    identifier: str | None = Field(default=None, min_length=1, max_length=320)
+    email: str | None = Field(default=None, min_length=1, max_length=320)
+    password: str = Field(min_length=8, max_length=128)
+
+    def resolved_identifier(self) -> str:
+        value = (self.identifier if self.identifier is not None else self.email) or ""
+        value = value.strip()
+        if not value:
+            raise ValueError("Please enter your username or email address")
+        return value
+
+
+class CredentialRegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    email: str = Field(min_length=3, max_length=320)
+    username: str | None = Field(default=None, min_length=3, max_length=30)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(min_length=10, max_length=256)
+    password: str = Field(min_length=8, max_length=128)
 
 
 def _start_login_session(request: Request, profile: dict[str, Any]) -> None:
@@ -131,6 +217,7 @@ def dev_login_enabled() -> bool:
 
 def provider_status() -> dict[str, bool]:
     return {
+        "password": True,
         "google": bool(os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET")),
         "github": bool(os.getenv("GITHUB_CLIENT_ID") and os.getenv("GITHUB_CLIENT_SECRET")),
     }
@@ -215,7 +302,10 @@ def _session_profile(user: dict[str, Any]) -> dict[str, Any]:
         "last_login_at",
         "login_count",
     )
-    return {key: user.get(key) for key in keys}
+    profile = {key: user.get(key) for key in keys}
+    # An uploaded avatar always wins over the OAuth provider image.
+    profile["avatar_url"] = resolve_avatar_url(user)
+    return profile
 
 
 def _auth_redirect(error: str | None = None) -> RedirectResponse:
@@ -262,6 +352,81 @@ def collaboration_user(request: Request) -> dict[str, Any]:
 @router.get("/providers")
 async def auth_providers():
     return {"providers": provider_status(), "dev_login": dev_login_enabled()}
+
+
+@router.post("/register")
+async def register_with_password(payload: CredentialRegisterRequest, request: Request):
+    _check_credential_rate_limit(request, payload.email)
+    try:
+        user = register_password_account(payload.name, payload.email, payload.password, payload.username)
+    except ValueError as exc:
+        message = str(exc)
+        lowered = message.lower()
+        status = 409 if ("already exists" in lowered or "already taken" in lowered) else 422
+        raise HTTPException(status, detail=message) from None
+    if user.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="This account has been suspended")
+    profile = _session_profile(user)
+    _start_login_session(request, profile)
+    _clear_credential_rate_limit(request, payload.email)
+    log_admin_action(profile["id"], "auth.register", "session", detail={"provider": "password"})
+    return {"authenticated": True, "user": profile, "session": _session_info(request)}
+
+
+@router.post("/login")
+async def login_with_password(payload: CredentialLoginRequest, request: Request):
+    try:
+        identifier = payload.resolved_identifier()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _check_credential_rate_limit(request, identifier)
+    try:
+        user = authenticate_password_account(identifier, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    if user is None:
+        raise HTTPException(status_code=401, detail="Incorrect username/email or password. Use your sign-in username or email, not your display name")
+    if user.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="This account has been suspended")
+    profile = _session_profile(user)
+    _start_login_session(request, profile)
+    _clear_credential_rate_limit(request, identifier)
+    log_admin_action(profile["id"], "auth.login", "session", detail={"provider": "password"})
+    return {"authenticated": True, "user": profile, "session": _session_info(request)}
+
+
+@router.post("/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest, request: Request):
+    # Always respond generically so callers cannot probe which emails exist.
+    _check_credential_rate_limit(request, f"forgot:{payload.email}")
+    token = create_password_reset_token(payload.email)
+    if token is not None:
+        reset_url = f"{_frontend_url()}/?reset_token={token}"
+        print(f"[auth] Password reset link (valid 60 minutes): {reset_url}")
+        log_admin_action("anonymous", "auth.password_reset_requested", "session")
+    return {
+        "message": "If an account uses this email, a password reset link has been sent.",
+        # Exposed only outside production so local developers can complete the
+        # flow without an SMTP server. Production responses omit this field.
+        **({"reset_token": token} if token is not None and os.getenv("APP_ENV", "development").lower() != "production" else {}),
+    }
+
+
+@router.post("/reset-password")
+async def reset_password(payload: ResetPasswordRequest, request: Request):
+    _check_credential_rate_limit(request, f"reset:{payload.token[:12]}")
+    try:
+        user = consume_password_reset_token(payload.token, payload.password)
+    except ValueError as exc:
+        message = str(exc)
+        status = 422 if "Password" in message else 400
+        raise HTTPException(status, detail=message) from None
+    if user.get("status") == "suspended":
+        raise HTTPException(status_code=403, detail="This account has been suspended")
+    profile = _session_profile(user)
+    _start_login_session(request, profile)
+    log_admin_action(profile["id"], "auth.password_reset_completed", "session", detail={"provider": "password"})
+    return {"authenticated": True, "user": profile, "session": _session_info(request)}
 
 
 @router.get("/me")
@@ -384,6 +549,55 @@ async def profile_update(payload: ProfileUpdateRequest, request: Request):
         raise HTTPException(status_code=404, detail="Profile not found")
     profile = _session_profile(updated)
     request.session["user"] = profile
+    return {"user": profile}
+
+
+@router.get("/avatars/{token}.webp")
+async def serve_avatar(token: str):
+    """Serve an uploaded avatar by its unguessable token (no login needed)."""
+    if not token or len(token) > 64 or any(char not in "0123456789abcdef" for char in token.lower()):
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    directory = avatar_file_path("__probe__").parent
+    path = (directory / f"{token.lower()}.webp").resolve()
+    if path.parent != directory or not path.is_file():
+        raise HTTPException(status_code=404, detail="Avatar not found")
+    return FileResponse(path, media_type="image/webp", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@router.post("/avatar")
+async def upload_avatar(request: Request, file: UploadFile = File(...)):
+    """Upload a new profile avatar. The image is cropped square server-side."""
+    current = current_user(request)
+    user_id = str(current["id"])
+    _check_avatar_rate_limit(user_id)
+    payload = await file.read()
+    # UploadFile.read() has no server-side cap; enforce ours before processing.
+    if len(payload) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Avatar must be an image up to 5 MB")
+    try:
+        updated = set_custom_avatar(user_id, payload)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if message == "Profile not found" else 422
+        raise HTTPException(status, detail=message) from None
+    profile = _session_profile(updated)
+    request.session["user"] = profile
+    log_admin_action(user_id, "auth.avatar_updated", "session")
+    return {"user": profile}
+
+
+@router.delete("/avatar")
+async def remove_avatar(request: Request):
+    """Remove the uploaded avatar and return to the provider image/initials."""
+    current = current_user(request)
+    user_id = str(current["id"])
+    _check_avatar_rate_limit(user_id)
+    updated = clear_custom_avatar(user_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    profile = _session_profile(updated)
+    request.session["user"] = profile
+    log_admin_action(user_id, "auth.avatar_removed", "session")
     return {"user": profile}
 
 

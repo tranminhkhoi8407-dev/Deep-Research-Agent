@@ -1,16 +1,33 @@
-"""Small SQLite-backed account registry and administrator audit log."""
+"""Small SQLite-backed account registry, local credentials, and audit log."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import io
 import json
 import os
+import re
+import secrets
 import sqlite3
+import uuid
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
 _UNSET = object()
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,30}$")
+_PASSWORD_PROVIDER = "password"
+_PASSWORD_RESET_TTL_SECONDS = 3600
+
+# Custom profile avatars: normalized server-side to a small square WebP.
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024
+_AVATAR_SIZE = 256
+_AVATAR_MAX_PIXELS = 16_000_000
 
 
 def _now() -> str:
@@ -21,6 +38,140 @@ def _database_path() -> Path:
     path = Path(os.getenv("AUTH_DATABASE_PATH", "data/deep-research.db")).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _normalize_email(email: str) -> str:
+    normalized = (email or "").strip().lower()
+    if not _EMAIL_RE.fullmatch(normalized):
+        raise ValueError("Please enter a valid email address")
+    if len(normalized) > 320:
+        raise ValueError("Email address is too long")
+    return normalized
+
+
+def _normalize_account_name(name: str) -> str:
+    normalized = " ".join((name or "").strip().split())
+    if len(normalized) < 2:
+        raise ValueError("Please enter your name")
+    if len(normalized) > 80:
+        raise ValueError("Name must be 80 characters or fewer")
+    return normalized
+
+
+def _normalize_username(username: str) -> str:
+    normalized = (username or "").strip()
+    if not _USERNAME_RE.fullmatch(normalized):
+        raise ValueError("Username must be 3-30 characters: letters, numbers, dot, underscore or hyphen")
+    return normalized
+
+
+def _normalize_identifier(identifier: str) -> tuple[str, str]:
+    """Return (kind, value) where kind is 'email' or 'username'."""
+    value = (identifier or "").strip()
+    if not value or len(value) > 320:
+        raise ValueError("Please enter your username or email address")
+    if "@" in value:
+        return "email", _normalize_email(value)
+    return "username", _normalize_username(value)
+
+
+_COMMON_PASSWORDS = frozenset({
+    "password", "password1", "password123", "12345678", "123456789", "1234567890",
+    "qwerty", "qwerty123", "abc12345", "11111111", "00000000", "iloveyou",
+    "admin123", "welcome1", "letmein1", "monkey123", "dragon123", "123123123",
+    "matkhau1", "matkhau123",
+})
+
+_PASSWORD_RULES = (
+    ("Password must be at least 8 characters", lambda value: len(value) >= 8),
+    ("Password must be 128 characters or fewer", lambda value: len(value) <= 128),
+)
+
+
+def password_strength(password: str) -> dict[str, object]:
+    """Score a password 0-4 without rejecting it, for UI guidance only."""
+    value = password or ""
+    score = 0
+    checks = {
+        "length": len(value) >= 8,
+        "variety": sum([
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(not char.isalnum() for char in value),
+        ]) >= 2,
+        "long": len(value) >= 12,
+        "complex": sum([
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(not char.isalnum() for char in value),
+        ]) >= 3 and len(value) >= 10,
+    }
+    score = sum(1 for key in ("length", "variety", "long", "complex") if checks[key])
+    # Common passwords are never strong, no matter how they score.
+    if value.strip().lower() in _COMMON_PASSWORDS:
+        score = 0
+    return {"score": score, "checks": checks}
+
+
+def _validate_password(password: str) -> str:
+    if not isinstance(password, str):
+        raise ValueError("Password must be at least 8 characters")
+    for message, predicate in _PASSWORD_RULES:
+        if not predicate(password):
+            raise ValueError(message)
+    if not password.strip() or password.isspace():
+        raise ValueError("Password cannot be blank or contain only spaces")
+    if len(password.strip()) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    lowered = password.strip().lower()
+    if lowered in _COMMON_PASSWORDS:
+        raise ValueError("This password is too common. Please choose a stronger password")
+    # Registration requires a minimum of letters + numbers so stored hashes
+    # resist trivial guessing. Login verification itself is unaffected.
+    has_letter = any(char.isalpha() for char in password)
+    has_digit = any(char.isdigit() for char in password)
+    if not (has_letter and has_digit):
+        raise ValueError("Password must include both letters and numbers")
+    return password
+
+
+def _hash_password(password: str, *, salt: bytes | None = None) -> str:
+    secret = _validate_password(password).encode("utf-8")
+    resolved_salt = salt or secrets.token_bytes(16)
+    derived = hashlib.scrypt(secret, salt=resolved_salt, n=2**14, r=8, p=1, dklen=32)
+    return "$".join(
+        [
+            "scrypt",
+            "16384",
+            "8",
+            "1",
+            base64.urlsafe_b64encode(resolved_salt).decode("ascii"),
+            base64.urlsafe_b64encode(derived).decode("ascii"),
+        ]
+    )
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        algorithm, n, r, p, salt_b64, digest_b64 = stored.split("$", 5)
+        if algorithm != "scrypt":
+            return False
+        derived = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=base64.urlsafe_b64decode(salt_b64.encode("ascii")),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=32,
+        )
+        return hmac.compare_digest(
+            derived,
+            base64.urlsafe_b64decode(digest_b64.encode("ascii")),
+        )
+    except (ValueError, TypeError):
+        return False
 
 
 def _connect() -> sqlite3.Connection:
@@ -66,8 +217,25 @@ def _connect() -> sqlite3.Connection:
             PRIMARY KEY (user_id, tour_id)
         );
 
+        CREATE TABLE IF NOT EXISTS local_credentials (
+            user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS password_resets (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at TEXT NOT NULL,
+            used_at TEXT,
+            created_at TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at DESC);
         CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_local_credentials_email ON local_credentials(email);
         """
     )
     # Lightweight forward migration for databases created before licenses existed.
@@ -89,6 +257,10 @@ def _connect() -> sqlite3.Connection:
         "organization": "TEXT NOT NULL DEFAULT ''",
         "website": "TEXT NOT NULL DEFAULT ''",
         "research_interests": "TEXT NOT NULL DEFAULT '[]'",
+        # User-uploaded avatar. OAuth provider avatars keep refreshing the
+        # base `avatar_url` column on every login, so custom uploads live in
+        # their own column and always win when present.
+        "custom_avatar_url": "TEXT",
     }
     for column, definition in profile_migrations.items():
         if column not in columns:
@@ -106,6 +278,8 @@ def _admin_emails() -> set[str]:
 
 
 def _default_role(user: dict[str, Any]) -> str:
+    if str(user.get("provider") or "").lower() == _PASSWORD_PROVIDER:
+        return "member"
     email = str(user.get("email") or "").lower()
     if email and email in _admin_emails():
         return "admin"
@@ -162,9 +336,319 @@ def register_login(user: dict[str, Any]) -> dict[str, Any]:
     return _row_to_user(row) or user
 
 
+def _username_taken(connection: sqlite3.Connection, username: str, *, exclude_user_id: str | None = None) -> bool:
+    row = connection.execute(
+        "SELECT id FROM users WHERE LOWER(username) = LOWER(?) LIMIT 1",
+        (username,),
+    ).fetchone()
+    if row is None:
+        return False
+    return exclude_user_id is None or str(row["id"]) != exclude_user_id
+
+
+def register_password_account(
+    name: str, email: str, password: str, username: str | None = None,
+) -> dict[str, Any]:
+    """Create a first-party password account and return its persisted profile."""
+    resolved_name = _normalize_account_name(name)
+    resolved_email = _normalize_email(email)
+    resolved_username = _normalize_username(username) if username is not None and str(username).strip() else None
+    if resolved_username is None:
+        # Derive a readable default from the email prefix so every password
+        # account can sign in with either a username or an email address.
+        prefix = re.sub(r"[^A-Za-z0-9._-]+", "", resolved_email.split("@")[0])[:24] or "researcher"
+        if len(prefix) < 3:
+            prefix = (prefix + "user")[:30]
+        resolved_username = prefix
+    password_hash = _hash_password(password)
+    now = _now()
+    user_id = f"{_PASSWORD_PROVIDER}:{uuid.uuid4().hex}"
+    with _connect() as connection:
+        if connection.execute(
+            "SELECT 1 FROM local_credentials WHERE email = ?",
+            (resolved_email,),
+        ).fetchone():
+            raise ValueError("An account with this email already exists")
+        if _username_taken(connection, resolved_username):
+            # Make the derived default unique instead of failing registration.
+            if username is not None and str(username).strip():
+                raise ValueError("This username is already taken")
+            suffix = 2
+            candidate = resolved_username
+            while _username_taken(connection, candidate):
+                tail = str(suffix)
+                candidate = f"{resolved_username[:30 - len(tail)]}{tail}"
+                suffix += 1
+                if suffix > 9999:
+                    raise ValueError("This username is already taken")
+            resolved_username = candidate
+        connection.execute(
+            """
+            INSERT INTO users
+                (id, provider, name, email, avatar_url, username, role, status,
+                 created_at, last_login_at, login_count)
+            VALUES (?, ?, ?, ?, ?, ?, 'member', 'active', ?, ?, 1)
+            """,
+            (
+                user_id,
+                _PASSWORD_PROVIDER,
+                resolved_name,
+                resolved_email,
+                None,
+                resolved_username,
+                now,
+                now,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO local_credentials (user_id, email, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, resolved_email, password_hash, now, now),
+        )
+        row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return _row_to_user(row) or {
+        "id": user_id,
+        "provider": _PASSWORD_PROVIDER,
+        "name": resolved_name,
+        "email": resolved_email,
+        "username": resolved_username,
+    }
+
+
+def authenticate_password_account(identifier: str, password: str) -> dict[str, Any] | None:
+    """Return the signed-in profile if username/email + password are valid."""
+    kind, value = _normalize_identifier(identifier)
+    with _connect() as connection:
+        if kind == "email":
+            row = connection.execute(
+                """
+                SELECT users.*
+                FROM local_credentials
+                JOIN users ON users.id = local_credentials.user_id
+                WHERE local_credentials.email = ?
+                """,
+                (value,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """
+                SELECT users.*
+                FROM local_credentials
+                JOIN users ON users.id = local_credentials.user_id
+                WHERE LOWER(users.username) = LOWER(?)
+                """,
+                (value,),
+            ).fetchone()
+    user = _row_to_user(row)
+    if not user:
+        return None
+    with _connect() as connection:
+        credential_row = connection.execute(
+            "SELECT password_hash FROM local_credentials WHERE user_id = ?",
+            (user["id"],),
+        ).fetchone()
+    if credential_row is None or not _verify_password(password, str(credential_row["password_hash"])):
+        return None
+    return register_login(
+        {
+            "id": user["id"],
+            "provider": _PASSWORD_PROVIDER,
+            "name": user["name"],
+            "email": user.get("email"),
+            "avatar_url": user.get("avatar_url"),
+            "username": user.get("username"),
+        }
+    )
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def create_password_reset_token(email: str) -> str | None:
+    """Create a single-use reset token for the account owning this email.
+
+    Returns None when no password account uses the email, so callers can
+    respond with a generic message that does not reveal account existence.
+    """
+    try:
+        resolved_email = _normalize_email(email)
+    except ValueError:
+        return None
+    now = _now()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT user_id FROM local_credentials WHERE email = ?",
+            (resolved_email,),
+        ).fetchone()
+        if row is None:
+            return None
+        user_id = str(row["user_id"])
+        # One active token per account keeps the flow predictable.
+        connection.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+        token = secrets.token_urlsafe(32)
+        expires = datetime.fromtimestamp(
+            datetime.now(timezone.utc).timestamp() + _PASSWORD_RESET_TTL_SECONDS,
+            tz=timezone.utc,
+        ).isoformat()
+        connection.execute(
+            """
+            INSERT INTO password_resets (token_hash, user_id, expires_at, used_at, created_at)
+            VALUES (?, ?, ?, NULL, ?)
+            """,
+            (_hash_reset_token(token), user_id, expires, now),
+        )
+    return token
+
+
+def consume_password_reset_token(token: str, new_password: str) -> dict[str, Any]:
+    """Validate a reset token, set the new password, and return the user."""
+    candidate = (token or "").strip()
+    if not candidate:
+        raise ValueError("Invalid or expired reset link")
+    password_hash = _hash_password(new_password)
+    now = _now()
+    with _connect() as connection:
+        row = connection.execute(
+            "SELECT token_hash, user_id, expires_at, used_at FROM password_resets WHERE token_hash = ?",
+            (_hash_reset_token(candidate),),
+        ).fetchone()
+        if row is None or row["used_at"] is not None:
+            raise ValueError("Invalid or expired reset link")
+        try:
+            expiry = datetime.fromisoformat(str(row["expires_at"]))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise ValueError("Invalid or expired reset link") from None
+        if expiry <= datetime.now(timezone.utc):
+            raise ValueError("Invalid or expired reset link")
+        user_id = str(row["user_id"])
+        connection.execute(
+            "UPDATE local_credentials SET password_hash = ?, updated_at = ? WHERE user_id = ?",
+            (password_hash, now, user_id),
+        )
+        connection.execute(
+            "UPDATE password_resets SET used_at = ? WHERE token_hash = ?",
+            (now, str(row["token_hash"])),
+        )
+        user_row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    user = _row_to_user(user_row)
+    if user is None:
+        raise ValueError("Invalid or expired reset link")
+    return register_login(
+        {
+            "id": user["id"],
+            "provider": _PASSWORD_PROVIDER,
+            "name": user["name"],
+            "email": user.get("email"),
+            "avatar_url": user.get("avatar_url"),
+            "username": user.get("username"),
+        }
+    )
+
+
 def get_user(user_id: str) -> dict[str, Any] | None:
     with _connect() as connection:
         return _row_to_user(connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone())
+
+
+def resolve_avatar_url(user: dict[str, Any] | None) -> str | None:
+    """Prefer an uploaded avatar; fall back to the OAuth provider image."""
+    if not isinstance(user, dict):
+        return None
+    custom = user.get("custom_avatar_url")
+    if isinstance(custom, str) and custom.strip():
+        return custom.strip()
+    avatar = user.get("avatar_url")
+    return str(avatar) if avatar else None
+
+
+def _avatars_dir() -> Path:
+    path = Path(os.getenv("AVATAR_DIR", "data/avatars")).resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def avatar_token(user_id: str) -> str:
+    """Unguessable, stable public token so avatar files need no auth to view."""
+    return hashlib.sha256(f"avatar:{user_id}".encode("utf-8")).hexdigest()[:24]
+
+
+def avatar_file_path(user_id: str) -> Path:
+    return _avatars_dir() / f"{avatar_token(user_id)}.webp"
+
+
+def normalize_avatar_image(payload: bytes) -> bytes:
+    """Validate an upload and normalize it to a square WebP avatar."""
+    from PIL import Image, ImageOps
+
+    if not payload or len(payload) > _AVATAR_MAX_BYTES:
+        raise ValueError("Avatar must be an image up to 5 MB")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
+                    raise ValueError("Avatar must be a PNG, JPEG, WEBP or GIF image")
+                if image.width * image.height > _AVATAR_MAX_PIXELS:
+                    raise ValueError("Avatar image is too large")
+                if getattr(image, "n_frames", 1) != 1:
+                    raise ValueError("Animated images are not supported for avatars")
+                image.load()
+                pixels = ImageOps.exif_transpose(image).convert("RGB")
+                side = min(pixels.width, pixels.height)
+                left = (pixels.width - side) // 2
+                top = (pixels.height - side) // 2
+                pixels = pixels.crop((left, top, left + side, top + side))
+                pixels = pixels.resize((_AVATAR_SIZE, _AVATAR_SIZE), Image.LANCZOS)
+                output = io.BytesIO()
+                pixels.save(output, "WEBP", quality=85, method=4)
+                return output.getvalue()
+    except ValueError:
+        raise
+    except Exception:
+        raise ValueError("Could not read this image file") from None
+
+
+def set_custom_avatar(user_id: str, payload: bytes) -> dict[str, Any]:
+    """Validate, store, and link an uploaded avatar; returns the user row."""
+    content = normalize_avatar_image(payload)
+    path = avatar_file_path(user_id)
+    path.write_bytes(content)
+    # Cache-busting query so browsers and CDNs fetch the new file at once.
+    version = int(datetime.now(timezone.utc).timestamp())
+    avatar_url = f"/api/auth/avatars/{path.name}?v={version}"
+    with _connect() as connection:
+        cursor = connection.execute(
+            "UPDATE users SET custom_avatar_url = ? WHERE id = ?",
+            (avatar_url, user_id),
+        )
+        if cursor.rowcount == 0:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            raise ValueError("Profile not found")
+        row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    user = _row_to_user(row)
+    if user is None:
+        raise ValueError("Profile not found")
+    return user
+
+
+def clear_custom_avatar(user_id: str) -> dict[str, Any] | None:
+    """Remove an uploaded avatar; the provider image or initials return."""
+    try:
+        avatar_file_path(user_id).unlink()
+    except OSError:
+        pass
+    with _connect() as connection:
+        connection.execute("UPDATE users SET custom_avatar_url = NULL WHERE id = ?", (user_id,))
+        row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return _row_to_user(row)
 
 
 def list_onboarding_tours(user_id: str) -> list[dict[str, Any]]:

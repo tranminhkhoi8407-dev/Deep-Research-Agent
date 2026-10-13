@@ -53,6 +53,7 @@ import {
   LoginPage,
   UserMenu,
   WelcomeTransition,
+  storeLoginCredential,
   type Appearance,
   type AuthProviders,
   type AuthUser,
@@ -618,6 +619,7 @@ export default function App() {
   const authUserRef = useRef(authUser);
   authUserRef.current = authUser;
   const [authProviders, setAuthProviders] = useState<AuthProviders>({
+    password: true,
     google: false,
     github: false,
     dev_login: false,
@@ -759,7 +761,7 @@ export default function App() {
         if (!providersResponse.ok || !meResponse.ok)
           throw new Error("Authentication service unavailable");
         const providerPayload = (await providersResponse.json()) as {
-          providers?: { google?: boolean; github?: boolean };
+          providers?: { password?: boolean; google?: boolean; github?: boolean };
           dev_login?: boolean;
         };
         const mePayload = (await meResponse.json()) as {
@@ -769,6 +771,7 @@ export default function App() {
         };
         if (cancelled) return;
         setAuthProviders({
+          password: providerPayload.providers?.password !== false,
           google: Boolean(providerPayload.providers?.google),
           github: Boolean(providerPayload.providers?.github),
           dev_login: Boolean(providerPayload.dev_login),
@@ -938,6 +941,97 @@ export default function App() {
       setAuthBusy(false);
     }
   };
+
+  const describeAuthError = (status: number, detail: unknown, fallback: string): string => {
+    if (typeof detail === 'string' && detail.trim()) {
+      if (/already exists/i.test(detail)) return 'An account with this email already exists. Please sign in instead.';
+      if (/already taken/i.test(detail)) return 'This username is already taken. Please choose another one.';
+      if (/incorrect username/i.test(detail)) return 'Incorrect username/email or password. Use your sign-in username or email — not your display name. Your username is shown in Profile > Account & access.';
+      if (/incorrect email or password/i.test(detail)) return 'Incorrect email or password. Please try again.';
+      if (/username or email/i.test(detail)) return 'Please enter your username or email address.';
+      if (/both letters and numbers/i.test(detail)) return detail;
+      if (/too common/i.test(detail)) return detail;
+      if (/too many attempts/i.test(detail)) return 'Too many attempts. Please wait a few minutes and try again.';
+      if (/suspended/i.test(detail)) return 'This account has been suspended. Please contact the host.';
+      if (/valid email/i.test(detail)) return 'Please enter a valid email address.';
+      if (/reset link/i.test(detail)) return 'This reset link is invalid or has expired. Please request a new one.';
+      return detail;
+    }
+    if (Array.isArray(detail)) {
+      const first = detail.find((item) => item && typeof item.msg === 'string') as { msg?: string; loc?: unknown } | undefined;
+      if (first?.msg) {
+        const location = Array.isArray(first.loc) ? first.loc.join('.') : '';
+        if (/username/i.test(location)) return 'Username must be 3-30 characters: letters, numbers, dot, underscore or hyphen.';
+        if (/email/i.test(location)) return 'Please enter a valid email address.';
+        if (/identifier/i.test(location)) return 'Please enter your username or email address.';
+        if (/password/i.test(location)) return 'Password must be at least 8 characters.';
+        if (/name/i.test(location)) return 'Please enter your name (at least 2 characters).';
+        return first.msg;
+      }
+    }
+    if (status === 429) return 'Too many attempts. Please wait a few minutes and try again.';
+    if (status === 409) return 'This account already exists. Please sign in instead.';
+    if (status === 401) return 'Incorrect username/email or password. Use your sign-in username or email — not your display name.';
+    return fallback;
+  };
+
+  const submitPasswordAuth = async (
+    path: "/api/auth/login" | "/api/auth/register" | "/api/auth/reset-password",
+    payload: Record<string, string>,
+    fallback: string,
+  ) => {
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000),
+      });
+      const body = await response.json().catch(() => ({})) as { detail?: unknown; user?: AuthUser; session?: unknown };
+      if (!response.ok) throw new Error(describeAuthError(response.status, body.detail, fallback));
+      if (!body.user) throw new Error(fallback);
+      authGeneration.current++;
+      setAuthUser(body.user);
+      setLoginSession(readLoginSession(body.session));
+      setAuthStatus("authenticated");
+      setShowWelcome(true);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : fallback);
+      throw error;
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const passwordLogin = async (payload: { identifier: string; password: string }) => {
+    await submitPasswordAuth("/api/auth/login", payload, "Could not sign in with these credentials.");
+    // Ask the browser to remember the login so the next visit suggests it,
+    // just like GitHub's sign-in form does.
+    storeLoginCredential(payload.identifier, payload.password);
+  };
+
+  const passwordRegister = async (payload: { name: string; username: string; email: string; password: string }) => {
+    await submitPasswordAuth("/api/auth/register", payload, "Could not create the account.");
+    storeLoginCredential(payload.username || payload.email, payload.password);
+  };
+
+  const forgotPassword = async (payload: { email: string }) => {
+    const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+    const body = await response.json().catch(() => ({})) as { detail?: unknown; message?: string };
+    if (!response.ok) throw new Error(describeAuthError(response.status, body.detail, "Could not send the reset email. Please try again."));
+  };
+
+  const resetPassword = async (payload: { token: string; password: string }) =>
+    submitPasswordAuth("/api/auth/reset-password", payload, "Could not reset the password.");
 
   const chooseLoginSession = async (remember: boolean) => {
     if (!authUserRef.current || sessionSaving.current) throw new LoginSessionError(409);
@@ -1481,6 +1575,10 @@ export default function App() {
         busy={authBusy}
         error={authError}
         onOAuth={beginOAuth}
+        onPasswordLogin={passwordLogin}
+        onPasswordRegister={passwordRegister}
+        onForgotPassword={forgotPassword}
+        onResetPassword={resetPassword}
         onDevelopmentLogin={() => void developmentLogin()}
         onOpenInformation={navigateToInformation}
       />

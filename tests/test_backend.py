@@ -185,7 +185,7 @@ def test_auth_provider_status(monkeypatch) -> None:
         response = client.get("/api/auth/providers")
 
     assert response.json() == {
-        "providers": {"google": False, "github": True},
+        "providers": {"password": True, "google": False, "github": True},
         "dev_login": True,
     }
 

@@ -226,6 +226,10 @@ def _open_database_unlocked() -> sqlite3.Connection:
     if "details_json" not in event_columns:
         conn.execute("ALTER TABLE collaboration_events ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'")
     initialize_social(conn)
+    from backend.discussions import initialize as initialize_discussions
+    initialize_discussions(conn)
+    from backend.notebook_media import initialize as initialize_notebook_media
+    initialize_notebook_media(conn)
     conn.commit()
     _SCHEMA_READY.add(database_key)
     return conn
@@ -1272,6 +1276,8 @@ def initialize_blocks(page_id: str, payload: BlockDocumentInput, user: dict = De
             raise HTTPException(409, "Document changed; reopen it before conversion")
         if len(document["notebook"].children):
             raise HTTPException(409, "Block document already exists")
+        from backend.notebook_media import authorize_document_images
+        authorize_document_images(conn, page_id, user['id'], proposed)
         legacy = str(document["markdown"])
         if legacy:
             conn.execute("INSERT INTO page_versions (id,page_id,author_id,label,markdown,created_at) VALUES (?,?,?,?,?,?)", (ident(), page_id, user["id"], "Original Markdown before block conversion", legacy, now()))
@@ -1624,6 +1630,8 @@ def duplicate_page(page_id: str, user: dict = Depends(current_user)):
         position = conn.execute("SELECT COALESCE(MAX(position),-1)+1 FROM research_pages WHERE project_id=? AND parent_id IS ?", (page["project_id"], page["parent_id"])).fetchone()[0]
         conn.execute("INSERT INTO research_pages (id,project_id,parent_id,title,created_by,updated_by,created_at,updated_at,position,editor_format,icon,cover,full_width) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                      (new_id, page["project_id"], page["parent_id"], page["title"][:113] + " (copy)", user["id"], user["id"], timestamp, timestamp, position, page["editor_format"], page["icon"], page["cover"], page["full_width"]))
+        from backend.notebook_media import authorize_document_images
+        authorize_document_images(conn, new_id, user['id'], document)
         copied_revision = conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (new_id, user["id"], document.get_update(), timestamp)).lastrowid
         if page["parent_id"]:
             add_field_child_link(conn, page["parent_id"], new_id, user["id"])
@@ -1912,11 +1920,18 @@ async def live_page(websocket: WebSocket, page_id: str):
                 latest_page = page_detail(conn, page_id, user_id, 3)
                 if latest_page["editor_format"] == "blocks" and envelope.get("format") != "blocks":
                     raise HTTPException(409, "Reload block editor")
-                if latest_page["editor_format"] == "blocks" and is_field_project(conn, latest_page["project_id"]):
+                if latest_page["editor_format"] == "blocks":
                     document, _ = document_state(conn, page_id)
                     before = page_link_blocks(document)
                     document.apply_update(update)
-                    sync_field_page_links(conn, latest_page, before, document, user_id)
+                    from backend.notebook_media import authorize_document_images
+                    try:
+                        authorize_document_images(conn, page_id, user_id, document)
+                    except HTTPException:
+                        await websocket.send_json({'type': 'error', 'id': envelope.get('id'), 'message': 'Image source access required; this update was not saved'})
+                        continue
+                    if is_field_project(conn, latest_page['project_id']):
+                        sync_field_page_links(conn, latest_page, before, document, user_id)
                 saved = conn.execute("INSERT INTO page_updates (page_id,author_id,update_blob,created_at) VALUES (?,?,?,?)", (page_id, user_id, update, now()))
                 conn.execute("UPDATE research_pages SET updated_by = ?, updated_at = ? WHERE id = ?", (user_id, now(), page_id))
             message_id = envelope.get("id")

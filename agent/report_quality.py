@@ -7,6 +7,7 @@ import math
 import re
 from decimal import Decimal
 from urllib.parse import urlsplit
+from agent.report_math import safe_math
 
 TOPICS = {
     "problem": r"abstract|introduction|motivation|contribution|background|problem",
@@ -62,6 +63,7 @@ def select_reading(sources, questions, limit, requested=()):
         for index, chunk in enumerate(source.get("chunks", [])):
             all_chunks.append({**chunk, "id": f"{source['id']}-C{index + 1}", "source_id": source["id"],
                                "url": source["url"], "title": source["title"], "read_status": source["read_status"],
+                               **({"document_id": source["document_id"]} if source.get("document_id") else {}),
                                "reading_topics": [key for key, score in topic_scores(chunk["text"]).items() if score]})
     by_id = {chunk["id"]: chunk for chunk in all_chunks}
     order = [by_id[key] for key in requested if key in by_id]
@@ -107,7 +109,7 @@ def reading_dossier(sources, evidence):
     return result
 
 
-def section_packet(evidence, keys, limit=14000):
+def section_packet(evidence, keys, limit=14000, *, source_priority=None):
     topics = set(topic for key in keys for topic in SECTION_TOPICS[key])
     def score(chunk, topic):
         return topic_scores(chunk["text"])[topic] + (16 if re.search(READING_ANCHORS.get(topic, r"(?!)"), chunk["text"], re.I | re.M) else 0)
@@ -117,13 +119,14 @@ def section_packet(evidence, keys, limit=14000):
     eligible = [chunk for chunk in evidence if not is_reference_chunk(chunk["text"]) and any(score(chunk, topic) for topic in topics)]
     if not eligible:
         eligible = [chunk for chunk in evidence if not is_reference_chunk(chunk["text"])]
-    ranked = sorted(eligible, key=lambda chunk: sum(score(chunk, topic) for topic in topics), reverse=True)
+    priority = lambda chunk: (source_priority or {}).get(chunk.get("source_id"), 0)
+    ranked = sorted(eligible, key=lambda chunk: (priority(chunk), sum(score(chunk, topic) for topic in topics)), reverse=True)
     chosen, used, ids = [], 0, set()
     # Each required topic gets its best candidate before ranking the rest.
     protected = []
     for topic in sorted(topics):
-        candidates = sorted(eligible, key=lambda chunk: score(chunk, topic), reverse=True)
-        if candidates and score(candidates[0], topic):
+        candidates = sorted([chunk for chunk in eligible if score(chunk, topic)], key=lambda chunk: (priority(chunk), score(chunk, topic)), reverse=True)
+        if candidates:
             protected.append(candidates[0])
     for chunk in protected + ranked:
         if chunk["id"] in ids or used + len(chunk["text"]) > limit:
@@ -163,19 +166,59 @@ def calculate(calculation, valid_proofs, evidence):
 
 
 def visual_as_text(visual):
+    # Include topology AND every interactive explanation in the semantic audit.
+    # A correct headline must not conceal a fabricated detail behind a click.
+    labels = {node["id"]: node["label"] for node in visual.get("nodes", [])}
     return "\n".join([visual["title"], visual["caption"], visual.get("conditions", ""), visual.get("unit", ""),
-                       *[node["label"] for node in visual.get("nodes", [])],
-                       *[edge.get("label", "") for edge in visual.get("edges", [])],
-                       *visual.get("columns", []), *[" | ".join(row["cells"]) for row in visual.get("rows", [])]])
+                       visual.get("dataset", ""), visual.get("metric", ""), visual.get("equation", ""), visual.get("explanation", ""),
+                       *[" | ".join(node.get(key, "") for key in ("label", "explanation", "inputs", "outputs")) for node in visual.get("nodes", [])],
+                       *[f"{labels.get(edge['source'], '')} -> {labels.get(edge['target'], '')}: {edge.get('label', '')}" for edge in visual.get("edges", [])],
+                       *visual.get("columns", []), *[" | ".join([*row["cells"], row.get("explanation", "")]) for row in visual.get("rows", [])],
+                       *[symbol["symbol"] + ": " + symbol["meaning"] for symbol in visual.get("symbols", [])]])
 
 
-def valid_visual(visual, valid_proofs, evidence, primary_ids=None):
+def visual_proofs(visual):
+    """Unique proof spans, including granular components (legacy-compatible)."""
+    items = list(visual.get("evidence", []))
+    for key in ("nodes", "edges", "rows", "symbols"):
+        items += [proof for part in visual.get(key, []) for proof in part.get("evidence", [])]
+    return list({(proof["chunk_id"], proof["quote"]): proof for proof in items}.values())
+
+
+def valid_visual(visual, valid_proofs, evidence, primary_ids=None, *, issues=None):
+    def reject(field, code):
+        if issues is not None:
+            issues.append({"field": field, "code": code})
+        return None
     proofs = valid_proofs(visual.get("evidence", []), evidence)
     if not proofs:
-        return None
+        return reject("evidence", "quote_mismatch")
     index = {chunk["id"]: chunk for chunk in evidence}
+    visual = {**visual}
+    # Rich components require their own valid spans. Old aggregate-only
+    # diagrams remain navigable, but never acquire fake per-node citations.
+    for key in ("nodes", "edges", "rows", "symbols"):
+        checked = []
+        for part_index, part in enumerate(visual.get(key, [])):
+            supplied = part.get("evidence", [])
+            rich = key == "symbols" or any(part.get(field) for field in ("explanation", "inputs", "outputs"))
+            own = valid_proofs(supplied, evidence)
+            if (supplied and len(own) != len(supplied)) or (rich and not own):
+                return reject(f"{key}.{part_index}.evidence", "component_quote_missing_or_mismatched")
+            if own:
+                text = " | ".join(str(part.get(field, "")) for field in ("label", "explanation", "inputs", "outputs", "symbol", "meaning"))
+                text += " | ".join(part.get("cells", []))
+                if not numbers(text) <= numbers(" ".join(proof["quote"] for proof in own)):
+                    return reject(f"{key}.{part_index}", "uncited_number")
+                if primary_ids is not None and not any(index[proof["chunk_id"]].get("source_id") in primary_ids for proof in own):
+                    return reject(f"{key}.{part_index}.evidence", "primary_source_required")
+            checked.append({**part, "evidence": own})
+        visual[key] = checked
+    proofs = visual_proofs({**visual, "evidence": proofs})
+    if len(proofs) > 16:
+        return reject("evidence", "too_many_unique_quotes")
     if primary_ids is not None and not any(index[proof["chunk_id"]].get("source_id") in primary_ids for proof in proofs):
-        return None
+        return reject("evidence", "primary_source_required")
     omitted = []
     if visual["kind"] == "flow":
         # A structural flow does not need an unverified sample-count/latency
@@ -193,26 +236,33 @@ def valid_visual(visual, valid_proofs, evidence, primary_ids=None):
             nodes.append({**node, "label": label.strip()})
         visual = {**visual, "nodes": nodes}
     if not numbers(visual_as_text(visual)) <= numbers(" ".join(proof["quote"] for proof in proofs)):
-        return None
+        return reject("evidence", "uncited_number")
     if visual["kind"] == "flow":
         ids = [node["id"] for node in visual.get("nodes", [])]
         if len(ids) < 2 or len(set(ids)) != len(ids) or not visual.get("edges"):
-            return None
+            return reject("nodes", "invalid_topology")
         if any(edge["source"] not in ids or edge["target"] not in ids or edge["source"] == edge["target"] for edge in visual["edges"]):
-            return None
-    else:
+            return reject("edges", "invalid_topology")
+    elif visual["kind"] == "equation":
+        if not visual.get("equation") or not visual.get("symbols") or not visual.get("explanation") or safe_math(visual["equation"]) is None:
+            return reject("equation", "missing_or_unsafe_equation")
+        if any(safe_math(symbol["symbol"]) is None for symbol in visual["symbols"]):
+            return reject("symbols", "unsafe_math")
+    elif visual["kind"] in {"table", "bar"}:
         width = len(visual.get("columns", []))
         if width < 2 or not visual.get("rows") or any(len(row["cells"]) != width for row in visual["rows"]):
-            return None
+            return reject("rows", "table_shape_mismatch")
         if visual["kind"] == "bar":
             if width != 2 or not visual.get("unit") or not visual.get("conditions"):
-                return None
+                return reject("conditions", "chart_conditions_missing")
             try:
                 values = [float(row["cells"][1].replace(",", ".")) for row in visual["rows"]]
                 if any(not math.isfinite(value) or value < 0 for value in values):
-                    return None
+                    return reject("rows", "invalid_measurement")
             except ValueError:
-                return None
+                return reject("rows", "invalid_measurement")
+    else:
+        return reject("kind", "unsupported_visual_kind")
     return {**visual, "evidence": proofs, "verification": "quote_matched", "origin": "agent_reconstruction", "omitted_numeric_annotations": omitted}
 
 

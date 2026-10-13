@@ -3,6 +3,8 @@
 WebSocket streams node progress, a source-linked structured draft for editorial
 review, and the final report with persistent provenance. Legacy interview graphs
 remain separate CLI/Studio entry points.
+Durable chat routes share that pipeline, with a separately authenticated and
+metered OpenCode worker; the browser never connects to its private server.
 """
 
 import asyncio
@@ -16,7 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ValidationError
@@ -40,10 +42,14 @@ from backend.schemas import (
 from backend.auth import current_admin, current_user, provider_status, router as auth_router
 from backend.paper_library import router as paper_library_router
 from backend.collaboration import router as collaboration_router
+from backend.notebook_media import router as notebook_media_router
 from backend.notifications import router as notifications_router
+from backend.discussions import router as discussions_router
 from backend.research_documents import router as research_documents_router
 from backend.report_export import ExportError, export_report
-from backend.sessions import RememberSessionMiddleware
+from backend.sessions import REMEMBERED_SECONDS, RememberSessionMiddleware
+from backend.research_chat import router as research_chat_router
+from backend.opencode_runtime import router as opencode_worker_router
 from backend.accounts import (
     get_user,
     list_audit_events,
@@ -54,6 +60,11 @@ from backend.accounts import (
 )
 
 load_dotenv()
+# Optional dedicated worker credentials generated locally; never the user's
+# personal OpenCode desktop credentials, and never exposed to the frontend.
+load_dotenv(Path(__file__).resolve().parents[1] / "data/opencode/runtime.env", override=False)
+# Explicit local prototype opt-in; no credential copying or session migration.
+load_dotenv(Path(__file__).resolve().parents[1] / "data/opencode-direct/runtime.env", override=False)
 
 # In-memory session store (production nên dùng Redis)
 active_sessions: dict[str, dict] = {}
@@ -157,9 +168,13 @@ def _admin_user_payload(user: dict) -> dict:
 async def lifespan(app: FastAPI):
     # Startup
     print("Nexora Agent API started")
-    yield
-    # Shutdown
-    print("Nexora Agent API stopped")
+    try:
+        yield
+    finally:
+        # Wake native question waits before the executor is shut down.
+        from backend.opencode_interactive import shutdown_workers
+        await asyncio.shield(asyncio.to_thread(shutdown_workers))
+        print("Nexora Agent API stopped")
 
 
 app = FastAPI(
@@ -178,7 +193,7 @@ app.add_middleware(
     RememberSessionMiddleware,
     secret_key=session_secret or "deep-research-local-development-only-secret",
     session_cookie="deep_research_session",
-    max_age=60 * 60 * 24 * 30,
+    max_age=REMEMBERED_SECONDS,
     same_site="lax",
     https_only=os.getenv("AUTH_COOKIE_SECURE", "false").lower() in {"1", "true", "yes", "on"},
 )
@@ -198,8 +213,21 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(paper_library_router)
 app.include_router(collaboration_router)
+app.include_router(notebook_media_router)
 app.include_router(notifications_router)
+app.include_router(discussions_router)
 app.include_router(research_documents_router)
+app.include_router(research_chat_router)
+app.include_router(opencode_worker_router)
+
+
+@app.middleware("http")
+async def private_discussion_responses(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/api/discussions/", "/api/auth/")):
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 @app.get("/health")
@@ -231,7 +259,7 @@ async def get_saved_report(report_id: str, user: dict = Depends(current_user)):
     if metadata.is_file():
         try:
             candidate = json.loads(metadata.read_text(encoding="utf-8"))
-            if isinstance(candidate, dict) and candidate.get("schema_version") in {"2.0", "2.1", "3.0"}:
+            if isinstance(candidate, dict) and candidate.get("schema_version") in {"2.0", "2.1", "3.0", "3.1"}:
                 report_data = candidate
         except (OSError, ValueError):
             pass  # The original Markdown remains readable if metadata is damaged.
@@ -877,6 +905,9 @@ def _format_node_details(node_name: str, node_output: dict) -> str:
     if node_name == "draft_report":
         count = sum(len(section.get("claims", [])) for section in node_output.get("report_data", {}).get("sections", []))
         return f"{count} source-matched claims drafted · semantic review pending"
+    if node_name == "generate_visuals":
+        info = node_output.get("report_data", {}).get("visual_status", {})
+        return f"Visuals: {info.get('status', 'not_generated')} · {info.get('attempts', 0)} creation/repair attempts · semantic review pending"
     if node_name == "audit_evidence":
         claims = [claim for section in node_output.get("report_data", {}).get("sections", []) for claim in section.get("claims", [])]
         checked = sum(claim.get("verification") == "model_checked" for claim in claims)

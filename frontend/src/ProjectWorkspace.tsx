@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, ChevronDown, ChevronRight, Copy, FileText, History, LayoutDashboard, Link2, LoaderCircle, LogOut, MoreHorizontal, NotebookPen, Palette, PanelLeft, Plus, RotateCcw, Search, ShieldCheck, Star, Trash2, Users, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Copy, FileText, History, LayoutDashboard, Link2, LoaderCircle, LogOut, MessageCircle, MoreHorizontal, NotebookPen, Palette, PanelLeft, Plus, RotateCcw, Search, ShieldCheck, Star, Trash2, Users, X } from 'lucide-react';
 import { displayName, type Appearance } from './Auth';
 import type { CollaborationProps, PageDetail, PageWorkspace, ProjectDetail, ProjectPage } from './CollaborationHub';
 import type { NotebookPageAction } from './NotebookPageIcon';
@@ -13,7 +13,6 @@ import { closeTab, restoreTabs, stepTab, tabLimit, visitTab, type TabState } fro
 import { isProjectPageHash, projectHash, projectPaneAllowed, projectTree, projectWorkspaceRoute, restoreProjectMemory, type ProjectPane, type ProjectRoute } from './projectNavigation';
 import { pageAncestors, pageDescendants } from './fieldNavigation';
 import { domains } from './DomainHub';
-import { SocialToolbar } from './SocialCenter';
 import './FieldWorkspace.css';
 import './NotebookChrome.css';
 import './ProjectWorkspace.css';
@@ -121,7 +120,7 @@ export function ProjectWorkspace(props: Props) {
       const allowedTabs = new Set(nextProject ? nextProject.pages.map(item => pageHash(item.id)) : nextPage ? [pageHash(nextPage.page.id)] : []);
       nextTabs = restoreTabs(nextTabs, value => typeof value === 'string' && allowedTabs.has(value));
       setTabs(nextTabs);
-      if (['tasks', 'evidence', 'members', 'activity', 'settings'].includes(nextPane)) setVisitedTools(previousTools => [...new Set([...previousTools, nextPane as ToolPane])]);
+      if (['discussion', 'meetings', 'tasks', 'evidence', 'members', 'activity', 'settings'].includes(nextPane)) setVisitedTools(previousTools => [...new Set([...previousTools, nextPane as ToolPane])]);
     };
     void load().catch(reason => {
       if (cancelled || epoch !== generation.current) return;
@@ -355,6 +354,7 @@ export function ProjectWorkspace(props: Props) {
   };
   const navigation = [
     ['overview', LayoutDashboard, vi ? 'Tổng quan' : 'Overview'], ['pages', FileText, vi ? 'Trang nghiên cứu' : 'Pages'],
+    ['discussion', MessageCircle, vi ? 'Thảo luận' : 'Discussion'], ['meetings', CalendarDays, vi ? 'Lịch họp & biên bản' : 'Meetings & minutes'],
     ['tasks', CheckCircle2, vi ? 'Việc cần làm' : 'Tasks'], ['evidence', Link2, vi ? 'Nguồn & paper' : 'Evidence'],
     ['members', Users, vi ? 'Thành viên' : 'Members'], ['activity', History, vi ? 'Hoạt động' : 'Activity'], ['settings', NotebookPen, vi ? 'Chi tiết dự án' : 'Details'],
   ] as const;
@@ -387,6 +387,7 @@ export function ProjectWorkspace(props: Props) {
     <aside id="project-sidebar" className="field-notebook__sidebar" aria-label={vi ? 'Điều hướng dự án' : 'Project navigation'}>
       <div className="field-sidebar-home"><a href="#/collab"><ArrowLeft size={14} />{vi ? 'Tất cả dự án' : 'All projects'}</a><button type="button" aria-label={vi ? 'Thu gọn sidebar' : 'Collapse sidebar'} onClick={() => { sidebar.setCollapsed(true); setMobile(false); shell.current?.querySelector<HTMLButtonElement>('.field-mobile-menu')?.focus(); }}><PanelLeft size={17} /></button></div>
       <div className="project-sidebar-identity"><span><DomainIcon size={22} /></span><div><small>{project ? vi ? 'Không gian dự án' : 'Project workspace' : vi ? 'Trang được chia sẻ' : 'Shared page'}</small><strong>{project?.project.name || page?.project.name || (vi ? 'Đang mở…' : 'Opening…')}</strong></div></div>
+      {project?.project.group_id && <a className="field-sidebar-link" href={`#/collab/group/${project.project.group_id}`}><Users size={16} />{vi ? 'Mở không gian nhóm' : 'Open group space'}</a>}
       {project && <NotebookSearch apiBase={apiBase} language={language} projectId={projectId} onOpen={open} />}
       {project && <section className="project-utilities"><button type="button" className="project-section-label" aria-expanded={!toolsCollapsed} onClick={() => setToolsCollapsed(value => !value)}>{toolsCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}{vi ? 'TIỆN ÍCH DỰ ÁN' : 'PROJECT TOOLS'}</button><nav hidden={toolsCollapsed} aria-label={vi ? 'Tiện ích dự án' : 'Project tools'}>{navigation.filter(([id]) => projectPaneAllowed(id, access)).map(([id, Icon, label]) => <button type="button" key={id} disabled={loading} className={pane === id ? 'is-active' : ''} aria-current={pane === id ? 'page' : undefined} onClick={() => selectPane(id)}><Icon size={16} /><span>{label}</span></button>)}</nav></section>}
       <div className="field-sidebar-scroll project-tree-scroll">
@@ -395,7 +396,6 @@ export function ProjectWorkspace(props: Props) {
         {canOrganize && <button type="button" className="project-new-page" disabled={busy || loading} onClick={() => create(null)}><Plus size={15} />{vi ? 'Trang mới' : 'New page'}</button>}
       </div>
       <div className="field-sidebar-bottom project-sidebar-footer"><a href="#/library" className="field-sidebar-link"><BookOpen size={15} />{vi ? 'Thư viện bài báo' : 'Paper library'}</a><a href="#/fields/guide" className="field-sidebar-link"><BookOpen size={15} />{vi ? 'Hướng dẫn editor & LaTeX' : 'Editor & LaTeX guide'}</a>{canManage && <button type="button" onClick={() => selectPane('archived')}><Trash2 size={15} />{vi ? 'Đã lưu trữ' : 'Archived pages'}<span>{project?.archived_pages.length || 0}</span></button>}
-        <div className="project-social"><SocialToolbar /></div>
         <details className="field-account"><summary><span className="field-account-avatar">{user.avatar_url ? <img src={user.avatar_url} alt="" referrerPolicy="no-referrer" /> : displayName(user).slice(0, 1)}</span><strong>{displayName(user)}</strong><ChevronDown size={14} /></summary><div><a href="#/profile">{vi ? 'Hồ sơ cá nhân' : 'My profile'}<ArrowRight size={12} /></a>{props.onAppearanceChange && <label>{vi ? 'Giao diện' : 'Appearance'}<select value={props.appearance || 'system'} onChange={event => props.onAppearanceChange?.(event.target.value as Appearance)}><option value="system">{vi ? 'Theo hệ thống' : 'System'}</option><option value="light">{vi ? 'Sáng' : 'Light'}</option><option value="dark">{vi ? 'Tối' : 'Dark'}</option></select></label>}{props.onLanguageChange && <label>{vi ? 'Ngôn ngữ' : 'Language'}<select value={language} onChange={event => props.onLanguageChange?.(event.target.value as typeof language)}><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>}{props.onLogout && <button type="button" onClick={props.onLogout}><LogOut size={14} />{vi ? 'Đăng xuất' : 'Sign out'}</button>}</div></details>
       </div>
     </aside>

@@ -56,7 +56,7 @@ function NotebookBlockMenuContent({ language, apiBase, pageId, onConvertToPage, 
   const types: BlockTypeSelectItem[] = [...blockTypeSelectItems(editor.dictionary).filter(item => item.type in editor.schema.blockSchema), { name: vi ? 'Mã nguồn' : 'Code', type: 'codeBlock', icon: Code }, { name: 'Block equation', type: 'mathBlock', icon: Sigma }];
   const textBlock = typeof block.content === 'string' || Array.isArray(block.content);
   const stats = blockTextStats(block);
-  const typeName = types.find(item => item.type === block.type && Object.entries(item.props || {}).every(([key, value]) => block.props[key] === value))?.name || (block.type === 'pageLink' ? (vi ? 'Trang' : 'Page') : block.type === 'table' ? (vi ? 'Bảng' : 'Table') : block.type);
+  const typeName = types.find(item => item.type === block.type && Object.entries(item.props || {}).every(([key, value]) => block.props[key] === value))?.name || (block.type === 'pageLink' ? (vi ? 'Trang' : 'Page') : block.type === 'notebookImage' ? (vi ? 'Ảnh' : 'Image') : block.type === 'webLink' ? (vi ? 'Liên kết URL' : 'URL link') : block.type === 'table' ? (vi ? 'Bảng' : 'Table') : block.type);
   const changeType = (type: string, props?: Record<string, boolean | number | string>) => {
     if (!editor.isEditable) return;
     // The asynchronous Page conversion can remove the hovered block. Dismiss

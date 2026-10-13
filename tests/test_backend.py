@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from http.cookies import SimpleCookie
 from types import SimpleNamespace
 
 import pytest
@@ -83,18 +84,20 @@ def test_auth_session_lifecycle(monkeypatch) -> None:
     assert signed_out.json() == {"authenticated": False, "user": None}
 
 
-def test_login_cookie_is_session_only_unless_user_opts_in(monkeypatch) -> None:
+def test_login_cookie_is_persistent_by_default_and_can_be_disabled(monkeypatch) -> None:
     monkeypatch.setenv("AUTH_DEV_LOGIN", "true")
 
     with TestClient(app) as client:
-        session_response = client.post("/api/auth/dev-login")
-        session_cookie = session_response.headers["set-cookie"]
-
-        remembered_response = client.post("/api/auth/dev-login?remember=true")
+        remembered_response = client.post("/api/auth/dev-login")
         remembered_cookie = remembered_response.headers["set-cookie"]
 
+        session_response = client.put("/api/auth/session", json={"remember": False}, headers={"X-Nexora-Session-Intent": "update"})
+        session_cookie = session_response.headers["set-cookie"]
+
     assert "max-age=" not in session_cookie.lower()
-    assert "max-age=2592000" in remembered_cookie.lower()
+    parsed = SimpleCookie()
+    parsed.load(remembered_cookie)
+    assert 2591990 <= int(parsed["deep_research_session"]["max-age"]) <= 2592000
     assert "httponly" in session_cookie.lower()
 
 

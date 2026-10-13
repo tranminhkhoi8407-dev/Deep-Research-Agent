@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from agent.documents import DocumentStore, canonical_url, paper_url
 from agent.model_output import ModelCallError, NARRATIVE_INSTRUCTION, QUOTE_REF_INSTRUCTION, classify_error, prepare_evidence_packet, record_failure, structured_invoke, validate_response
 from agent.research_contract import (
-    Brief, CoverageReview, ReportAudit, ReportDraft, SECTION_KEYS, SECTION_TITLES,
+    Brief, CoverageReview, ReportAudit, ReportDraft, VisualDraft, SECTION_KEYS, SECTION_TITLES,
     budget_for, resolve_language, resolve_research_topic,
 )
 from agent.report_quality import (DETAIL_PROFILES, arxiv_external, calculate, reading_dossier,
@@ -35,6 +35,9 @@ related paper. Never treat search snippets as full-text reading. Write explanato
 prose in {language}; retain original quotations, code and technical terms.
 Distinguish author-reported facts, inference, recommendations, educational illustrations
 and program-computed derivations. Illustrations are not paper experiments. No padding.
+For a visual, validate EACH node detail, edge, row and symbol against its OWN
+evidence when supplied, not an unrelated span elsewhere in the visual. Reject
+the visual if any component's identity, conditions or explanation is unsupported.
 """
 FIELD_GUIDANCE = {
     "mathematics": "Explain assumptions, definitions, theorem/lemma dependencies and proof steps. Flag gaps; never certify a proof without checking it. No forced empirical benchmark.",
@@ -43,6 +46,26 @@ FIELD_GUIDANCE = {
     "biology": "Check design, controls, sample size, confounders, uncertainty and association versus causation.",
     "artificial-intelligence": "Explain datasets/splits, baseline comparability, metrics, ablation, training versus inference, compute, cost scope, failure cases and reproducibility. Do not compare numbers across incompatible conditions.",
 }
+
+
+VISUAL_INSTRUCTION = """Your sole task is to BUILD VISUAL DATA. Return a VisualDraft JSON object containing visuals, not an essay or a relevance review. Create one or two compact, source-grounded interactive visuals from the supplied readings. For a software mechanism, normally create at least a conceptual flow; the sources need not provide an original figure, because you are reconstructing the documented relationships. Prefer a flow explaining the mechanism and a qualitative comparison table. A chart is optional, never required. Use reason insufficient_evidence with an empty visuals list ONLY if these readings truly cannot support even a small conceptual flow or qualitative table. Absence of benchmark numbers is NOT a reason to omit a supported conceptual flow/table. Do not treat an empty draft report as absence of source evidence; use the original readings.
+Return the VisualDraft structure. All labels/explanations are in the report language. Each figure needs kind, title (<=180 characters), caption (<=1000), section_key mechanism or evidence, and evidence. Label the caption as an agent reconstruction, not an original figure. Keep explanations concise. DO NOT execute code or include arbitrary image URLs.
+Respect the source_scope API/product/version identity, including the source title and URL. If current and legacy APIs differ, prefer the requested/current API. Never title a figure as the current API while using options from a related legacy API. If a legacy comparison is useful, explicitly label its identity and do not substitute it for the requested mechanism.
+Flow: nodes [{id,label,explanation,inputs,outputs,evidence}], edges [{source,target,label,evidence}]. IDs must match ^[A-Za-z][A-Za-z0-9_]{0,24}$; use short ASCII identifiers, not translated phrases or hyphens. Use 2-6 nodes and 1-8 explicit edges, no dangling/self edges. Each node AND edge must have its OWN 1-4 evidence spans supporting that exact detail/relationship. Never infer an execution edge merely from node ordering. Conditional feedback edges must state the condition. Distinguish training from inference and official software from third-party wrappers: do not combine unrelated pipelines.
+Table: columns [strings] (2-4), rows [{cells:[strings],explanation,evidence}] (2-6). Every cell MUST be a string, including numbers. Each row must have its OWN 1-4 evidence spans. Prefer conditions/limitations columns when comparisons are not matched. A bar needs exactly two columns, unit, conditions, dataset and metric; all rows must be the SAME evaluation setting. Do not mix datasets, splits, candidate counts, hardware or units.
+Equation: equation plain LaTeX without dollar delimiters, explanation, symbols [{symbol,meaning,evidence}]. Explain only a sourced equation; no scripts or custom functions. Each symbol needs its own source. Only include numerals explicitly present in the component's own quotes. Use <=16 UNIQUE spans per visual, reuse exact spans across components. Source identity, conditions and relationships will be checked by a separate semantic audit. Never invent measurements to get a figure to render."""
+
+
+def _visual_requested(state):
+    return state.get("report_detail", "detailed") != "concise" or bool(re.search(r"visual|diagram|chart|sơ đồ|biểu đồ|trực quan|minh hoạ|minh họa", state.get("topic", ""), re.I))
+
+
+def _visual_call_reserve(state):
+    """Leave at least one writing call and one semantic audit, within hard caps."""
+    if not _visual_requested(state):
+        return 0
+    room = state["budget"]["max_llm_calls"] - state["usage"]["llm_calls"]
+    return min(2 if state.get("research_depth") == "deep" else 1, max(0, room - 2))
 
 
 class State(TypedDict, total=False):
@@ -96,7 +119,11 @@ def _call(state: dict, schema, instruction: str, payload: dict, output_limit: in
     from agent.nodes import get_llm
     language = "Vietnamese" if state["report_language"] == "vi" else "English"
     prompt = SAFETY.format(language=language) + "\n" + instruction + "\nEvidence quotes must be SHORT CONTIGUOUS VERBATIM substrings of one chunk (prefer 40-250 characters). Preserve wording, punctuation and hyphens; do not paraphrase, reconstruct sentences across columns, or join separate passages. Do not give an empty evidence list for a claim; omit an unsupported claim instead."
-    prompt += "\nWrite native Unicode text, not HTML entities. Do not put ellipses (...) into quotations unless they actually occur in the source. Separate assertions needing different evidence into separate claims. Reported measurements in prose, code, math or tables must occur in the original cited chunk; prefer quote spans containing those values and their conditions. Self-created examples MUST use kind illustration, say explicitly they are not executed or reported experiments, and cite the method being illustrated. Derived calculations MUST use kind derived and supply cited inputs and an operation; the application computes the result. Never pass invented measurements off as inference."
+    if schema != VisualDraft:
+        prompt += "\nWrite native Unicode text, not HTML entities. Do not put ellipses (...) into quotations unless they actually occur in the source. Separate assertions needing different evidence into separate claims. Reported measurements in prose, code, math or tables must occur in the original cited chunk; prefer quote spans containing those values and their conditions. Self-created examples MUST use kind illustration, say explicitly they are not executed or reported experiments, and cite the method being illustrated. Derived calculations MUST use kind derived and supply cited inputs and an operation; the application computes the result. Never pass invented measurements off as inference."
+    if schema == ReportAudit:
+        payload = {**payload, "objective": state.get("brief", {}).get("objective", state.get("topic", ""))}
+        prompt += "\nCheck task and source identity as well as local entailment. A figure's TITLE and API/version scope must match its own source title/URL, not a navigation link to a different API. Do not approve a current API diagram derived from a related LEGACY API's options unless it is explicitly and correctly labeled as a legacy comparison. Do not mix third-party wrappers with the official product, or training and inference. Report-quality checks evaluate this written output, not the source documentation."
     body = json.dumps(payload, ensure_ascii=False)
     prepared_payload, quote_registry = prepare_evidence_packet(schema, payload)
     usage, budget = state["usage"], state["budget"]
@@ -115,7 +142,9 @@ def _call(state: dict, schema, instruction: str, payload: dict, output_limit: in
     usage["llm_calls"] += 1
     usage["input_tokens_estimated"] += estimated_input
     usage["output_tokens_reserved"] += cap
-    llm = get_llm()
+    from agent.runtime import research_invoker
+    invoke_override = research_invoker.get()
+    llm = None if invoke_override else get_llm()
     if hasattr(llm, "model_copy"):
         token_field = "max_tokens" if hasattr(llm, "max_tokens") else "max_output_tokens"
         updates = {token_field: cap}
@@ -128,7 +157,8 @@ def _call(state: dict, schema, instruction: str, payload: dict, output_limit: in
             updates["request_timeout"] = timeout
         llm = llm.model_copy(update=updates)
     try:
-        result = structured_invoke(llm, schema, [SystemMessage(content=prompt), HumanMessage(content=body)], prepared_payload=prepared_payload, quote_registry=quote_registry)
+        messages = [SystemMessage(content=prompt), HumanMessage(content=body)]
+        result = invoke_override(schema, messages, prepared_payload=prepared_payload, quote_registry=quote_registry, output_limit=cap, state=state) if invoke_override else structured_invoke(llm, schema, messages, prepared_payload=prepared_payload, quote_registry=quote_registry)
     except Exception as error:
         failure = classify_error(error)
         if failure.kind in {"invalid_request", "authentication", "rate_limit"}:
@@ -153,10 +183,11 @@ def _call(state: dict, schema, instruction: str, payload: dict, output_limit: in
         result = result["parsed"]
     if result is None:
         raise ModelCallError("empty_response", "The model did not return valid structured data.")
-    validated, removed = validate_response(schema, result)
+    issues = []
+    validated, removed = validate_response(schema, result, issues=issues)
     if removed:
-        stage = {CoverageReview: "assess_coverage", ReportDraft: "draft_report", ReportAudit: "audit_evidence"}.get(schema, "model_response")
-        record_failure(state, stage, ModelCallError("invalid_items", "Invalid response entries were removed; valid entries still require evidence checks.", fields=removed))
+        stage = {CoverageReview: "assess_coverage", ReportDraft: "draft_report", VisualDraft: "generate_visuals", ReportAudit: "audit_evidence"}.get(schema, "model_response")
+        record_failure(state, stage, ModelCallError("invalid_items", "Invalid response entries were removed; valid entries still require evidence checks.", fields=removed, issues=issues))
     return validated
 
 
@@ -251,7 +282,7 @@ def _budget_reading_packet(state: dict, evidence: list[dict]) -> list[dict]:
     Small custom budgets may still be insufficient; _call remains authoritative.
     """
     remaining = state["budget"]["max_input_tokens"] - state["usage"]["input_tokens_estimated"]
-    token_limit = max(1000, int((remaining - 6000) / 3.5))
+    token_limit = max(1000, int((remaining - 6000) / (4.5 if _visual_requested(state) else 3.5)))
     selected = list(evidence)
     while len(selected) > 1:
         packet, registry = prepare_evidence_packet(ReportDraft, {"evidence": selected})
@@ -280,6 +311,8 @@ def collect_evidence(state: State) -> dict:
         except Exception:
             state["warnings"].append("Local cache lookup failed; continuing with budgeted web discovery.")
         for document in warm_cache:
+            if document.get("extraction") == "pdf_text":
+                document = {**document, "document_id": document["id"]}
             sources.append({**document, "id": f"A1-W{len(sources) + 1}", "primary": False, "source_type": "pdf" if document.get("extraction") == "pdf_text" else "web", "quality": "unrated", "read_status": "partial_text" if document.get("truncated") else "full_text_available"})
             usage["documents"] += 1
             usage["cache_hits"] += 1
@@ -329,6 +362,8 @@ def collect_evidence(state: State) -> dict:
             source.update({key: value for key, value in document.items() if key != "id"})
             source["read_status"] = "partial_text" if document.get("truncated") else "full_text_available"
             source["source_type"] = "pdf" if document.get("extraction") == "pdf_text" else "web"
+            if source["source_type"] == "pdf":
+                source["document_id"] = document["id"]
             if source.get("primary") and source["source_type"] != "pdf":
                 source["read_status"] = "abstract_or_landing"
             usage["cache_hits"] += int(bool(document.get("cache_hit")))
@@ -383,10 +418,11 @@ def assess_coverage(state: State) -> dict:
     packet, registry = prepare_evidence_packet(CoverageReview, {"evidence": state["evidence"]})
     evidence_tokens = _estimate(json.dumps(packet, ensure_ascii=False) + (QUOTE_REF_INSTRUCTION if registry else ""))
     next_review_reserve = evidence_tokens + _estimate(json.dumps(catalog, ensure_ascii=False)) + 1000
-    writing_audit_reserve = evidence_tokens * 2 + 7500
+    writing_audit_reserve = evidence_tokens * 2 + 7500 + (9000 if _visual_requested(state) else 0)
     input_room = state["usage"]["input_tokens_estimated"] + next_review_reserve + writing_audit_reserve <= state["budget"]["max_input_tokens"]
     can_search = bool(pending) and state["usage"]["searches"] < state["budget"]["max_searches"] and state["usage"]["documents"] < state["budget"]["max_documents"]
-    can_continue = insufficient and (reads or can_search) and state["rounds"] < state["budget"]["max_rounds"] and state["usage"]["llm_calls"] < state["budget"]["max_llm_calls"] - 2 and input_room and not _expired(state)
+    call_limit = state["budget"]["max_llm_calls"] - 2 - _visual_call_reserve(state)
+    can_continue = insufficient and (reads or can_search) and state["rounds"] < state["budget"]["max_rounds"] and state["usage"]["llm_calls"] < call_limit and input_room and not _expired(state)
     if not insufficient:
         reason = "coverage_satisfied"
     elif can_continue:
@@ -397,7 +433,7 @@ def assess_coverage(state: State) -> dict:
         reason = "time_budget"
     elif state["rounds"] >= state["budget"]["max_rounds"]:
         reason = "reading_round_limit"
-    elif state["usage"]["llm_calls"] >= state["budget"]["max_llm_calls"] - 2:
+    elif state["usage"]["llm_calls"] >= call_limit:
         reason = "call_budget_reserved_for_writing"
     else:
         reason = "no_follow_up_selected"
@@ -476,14 +512,15 @@ def draft_report(state: State) -> dict:
     if state["evidence"] and primary_ok:
         detail = state.get("report_detail", "detailed")
         profile = DETAIL_PROFILES[detail]
-        available_writes = state["budget"]["max_llm_calls"] - state["usage"]["llm_calls"] - 1
+        visual_reserve = _visual_call_reserve(state)
+        available_writes = state["budget"]["max_llm_calls"] - state["usage"]["llm_calls"] - 1 - visual_reserve
         parts = [list(SECTION_KEYS)] if detail == "concise" or state.get("research_depth") == "quick" or available_writes < 2 else (
             [["answer", "scope"], ["mechanism"], ["evidence"], ["limitations", "next_steps"]] if available_writes >= 4 else
             [["answer", "scope"], ["mechanism"], ["evidence", "limitations", "next_steps"]] if available_writes >= 3 else
             [["answer", "scope", "mechanism"], ["evidence", "limitations", "next_steps"]])
         for keys in parts:
             # Preserve one call and output space for the final semantic audit.
-            if state["usage"]["llm_calls"] >= state["budget"]["max_llm_calls"] - 1:
+            if state["usage"]["llm_calls"] >= state["budget"]["max_llm_calls"] - 1 - visual_reserve:
                 record_failure(state, "draft_report", ModelCallError("call_budget", "Writing stopped to reserve the final evidence audit."))
                 break
             packet = section_packet(state["evidence"], keys, 8500 if len(parts) >= 3 else 10000)
@@ -495,13 +532,13 @@ For mechanism explain stages and inputs/outputs, equations in $...$ or $$...$$ w
 For evidence explain metrics, comparable baselines, evaluation/hardware conditions, ablation and what it does/does not establish. For limitations CRITIQUE the paper's assumptions, design, evidence, external validity and proxies; baseline weaknesses or motivation are not limitations of the proposed work. For next_steps give an actionable conditional reproduction/check plan, not merely a repository link.
 The limitations section MUST NOT be a sales pitch comparing this method favorably to costly competitors. Write your grounded critical analysis as kind inference: explain, for example, why the method's proxy metric is not proof of correctness, which evaluation assumptions limit generalization, or which comparison conditions have not been matched. Do not invent claims that data is absent; say only what the supplied readings establish. For next_steps use kind recommendation and explain concrete actions in sequence, what each action tests, and which settings must come from the paper. Do not just repeat hardware/performance measurements or give five citations on one claim.
 Technical guides need prerequisites, sourced steps/configuration, verification and troubleshooting; never invent version-sensitive commands. Research comparisons need conflicts, context and justified conclusions. Mathematics needs definitions, hypotheses, dependencies and proof gaps, not forced benchmark tables.
-Produce 1-2 useful visuals for mechanism/evidence when justified: a flow with explicit nodes/edges, a comparison table, or a bar chart with TWO columns [label,numeric_value], a unit and shared conditions. Every relationship/measurement must be grounded in its evidence. Label as agent reconstruction, not an original figure; no invented chart values. Visual captions must explain what the reader learns. Do not output arbitrary image URLs or Manim code.
+Write prose only; do not embed visual JSON. A separate structured step will create figures from original sources and audit each component.
 Derived numbers use kind derived with calculation operation and cited numeric inputs; the program computes the result. Recommendations/inferences must distinguish proposals from tested results. Never pad/repeat to meet length. Title <=240 chars, text <=6000 chars/claim, <=8 claims per section; <=2 visuals per part, <=8 nodes and <=12 edges/flow, <=6 table columns. """
             goal = profile["target_words"][0] // len(parts)
             instruction += f"\nThis part targets {goal}-{goal + 400} whitespace word units in core prose (exclude evidence quotations). Each major-section claim should normally have 2-4 explanatory paragraphs, not one sentence. Write a complete tutorial for the requested sections. If evidence is insufficient, explicitly say what cannot be established. Do not put all sections into one claim or duplicate a section key. Use native Unicode Vietnamese, never malformed HTML entities. "
             instruction += FIELD_GUIDANCE.get(state.get("research_domain", ""), "Use appropriate discipline-specific analysis.")
             try:
-                part = _call(state, ReportDraft, instruction, {"writing_format": "narrative", "section_keys": keys, "brief": state["brief"], "detail": detail, "reading_topics": [{"topic": item["topic"], "status": item["status"]} for item in state.get("dossier", [])], "evidence": packet}, min(5000 if len(parts) >= 3 else profile["call_output"], max(300, state["budget"]["max_output_tokens"] - state["usage"]["output_tokens_reserved"] - 4500))).model_dump()
+                part = _call(state, ReportDraft, instruction, {"writing_format": "narrative", "section_keys": keys, "brief": state["brief"], "detail": detail, "reading_topics": [{"topic": item["topic"], "status": item["status"]} for item in state.get("dossier", [])], "evidence": packet}, min(5000 if len(parts) >= 3 else profile["call_output"], max(300, state["budget"]["max_output_tokens"] - state["usage"]["output_tokens_reserved"] - 4500 - 3000 * visual_reserve))).model_dump()
                 if part["title"]:
                     draft["title"] = part["title"] if not draft["sections"] else draft["title"]
                 draft["sections"] += [section for section in part["sections"] if section["key"] in keys]
@@ -523,19 +560,159 @@ Derived numbers use kind derived with calculation operation and cited numeric in
     return {"report_data": data, "sections": [f"## {title}" for title in SECTION_TITLES[state["report_language"]]], "usage": state["usage"], "warnings": state["warnings"], "diagnostics": state.get("diagnostics", [])}
 
 
+def _visual_audit_reserve(state, packet):
+    """Conservative allowance for the growing final report + figure + audit."""
+    claims = [claim for section in state["report_data"]["sections"] for claim in section["claims"]]
+    cited = {proof["chunk_id"] for claim in claims for proof in claim["evidence"]}
+    chunks = [chunk for chunk in state["evidence"] if chunk["id"] in cited or chunk["id"] in {item["id"] for item in packet}]
+    prepared, _ = prepare_evidence_packet(ReportAudit, {"evidence": chunks})
+    return _estimate(json.dumps({"claims": claims, "evidence": prepared["evidence"]}, ensure_ascii=False)) + 9500
+
+
+def _visual_packet(state):
+    """Prefer task-matched primary/current docs, keeping original source identity.
+
+    No hardcoded vendor/domain list or implicit upgrade to another API version.
+    Legacy material is still usable when requested or when it is all we have.
+    """
+    topic = state["topic"]
+    targets = {token.lower() for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", topic)} - {"explain", "compare", "about", "using", "with", "from", "video", "research", "analysis", "method", "source", "prompt", "english", "vietnamese"}
+    wants_legacy = bool(re.search(r"\blegacy\b|\bdeprecated\b|đời cũ|phiên bản cũ", topic, re.I))
+    priorities = {}
+    for source in state["sources"]:
+        url = source.get("url", "")
+        score = _source_priority(source, state["brief"])
+        # URL identity has less scraped navigation noise than the page title.
+        compact_url = re.sub(r"[^a-z0-9]", "", url.lower())
+        score += sum(20 for token in targets if re.sub(r"[^a-z0-9]", "", token) in compact_url)
+        if source.get("primary"):
+            score += 100
+        if not wants_legacy and re.search(r"\blegacy\b|\bdeprecated\b", source.get("title", "") + " " + url, re.I):
+            score -= 80
+        priorities[source["id"]] = score
+    eligible = list(state["evidence"])
+    multi_source_comparison = bool(re.search(r"\bvs\.?\b|\bversus\b|compare .+ (?:with|against)|so sánh .+ với|đối chiếu (?:các|nhiều) (?:paper|nghiên cứu)", topic, re.I))
+    if not multi_source_comparison and eligible:
+        # One mechanism is not a collage of every implementation mentioning the
+        # topic. Keep the best task-matched documentation family for this visual
+        # pass. Other sources remain in the report/evidence ledger for criticism.
+        available_ids = {chunk["source_id"] for chunk in eligible}
+        candidates = [source for source in state["sources"] if source["id"] in available_ids]
+        anchor = max(candidates, key=lambda source: priorities[source["id"]]) if candidates else None
+        if anchor:
+            root = urlsplit(anchor["url"])
+            def same_family(source):
+                parsed = urlsplit(source["url"])
+                if parsed.hostname != root.hostname:
+                    return False
+                if parsed.hostname == "github.com":
+                    return parsed.path.split("/")[1:3] == root.path.split("/")[1:3]
+                return wants_legacy or not re.search(r"\blegacy\b|\bdeprecated\b", source.get("title", "") + " " + source["url"], re.I)
+            family = {source["id"] for source in candidates if same_family(source)} or {anchor["id"]}
+            eligible = [chunk for chunk in eligible if chunk["source_id"] in family]
+    return section_packet(eligible, ["mechanism", "evidence"], 6500, source_priority=priorities)
+
+
+def generate_visuals(state: State) -> dict:
+    """Bounded visual-only creation/format repair, always BEFORE semantic audit.
+
+    Repair regenerates from original evidence + sanitized error paths. It never
+    guesses missing citations or promotes source matching to semantic support.
+    """
+    state = _working_state(state)
+    data = json.loads(json.dumps(state["report_data"]))
+    status = {"requested": _visual_requested(state), "status": "not_generated", "attempts": 0, "generated": 0, "retained": 0, "issues": []}
+    data["visual_status"] = status
+    # Compatibility: a structured adapter may still return valid legacy figures.
+    # They go through the same final semantic audit, not a fake ready state.
+    if data.get("visuals"):
+        status.update(status="pending_audit", generated=len(data["visuals"]))
+    elif not status["requested"]:
+        status["status"] = "not_requested"
+    elif not state["evidence"] or (state.get("analysis_mode") == "paper" and not any(source.get("primary") and source.get("chunks_selected") for source in state["sources"])):
+        status["status"] = "insufficient_evidence"
+    else:
+        packet = _visual_packet(state)
+        primary_ids = {source["id"] for source in state["sources"] if source.get("primary")} if state.get("analysis_mode") == "paper" else None
+        # At most two attempts total, and only when final audit still fits.
+        for attempt in range(2):
+            room = state["budget"]["max_llm_calls"] - state["usage"]["llm_calls"]
+            remaining_input = state["budget"]["max_input_tokens"] - state["usage"]["input_tokens_estimated"]
+            remaining_output = state["budget"]["max_output_tokens"] - state["usage"]["output_tokens_reserved"]
+            if room < 2 or _expired(state) or remaining_output < 5000:
+                status.update(status="budget_exhausted", budget_kind="time_budget" if _expired(state) else "call_budget" if room < 2 else "output_budget")
+                break
+            if not packet:
+                status["status"] = "insufficient_evidence"
+                break
+            payload = {"topic": state["topic"], "objective": state["brief"]["objective"], "intent": state["brief"]["intent"], "section_keys": ["mechanism", "evidence"], "source_scope": [{"title": source["title"], "url": source["url"], "primary": bool(source.get("primary"))} for source in state["sources"] if source["id"] in {chunk["source_id"] for chunk in packet}], "evidence": packet, "repair_issues": status["issues"][-16:]}
+            prepared, registry = prepare_evidence_packet(VisualDraft, payload)
+            # Match _call's conservative estimate, leaving extra safety overhead
+            # for its shared instructions. Never spend the audit's last input.
+            generation_reserve = _estimate(json.dumps(prepared, ensure_ascii=False) + VISUAL_INSTRUCTION + QUOTE_REF_INSTRUCTION + SAFETY) + 1800
+            if remaining_input < generation_reserve + _visual_audit_reserve(state, packet):
+                status.update(status="budget_exhausted", budget_kind="input_budget")
+                break
+            before = len(state["diagnostics"])
+            status["attempts"] += 1
+            try:
+                result = _call(state, VisualDraft, VISUAL_INSTRUCTION + ("\nRegenerate a simpler visual from the SAME sources, fixing the listed contract defects. Do not reuse unsupported assertions." if attempt else ""), payload, min(3500, remaining_output - 4500)).model_dump()
+                status["model_reason"] = result["reason"]
+                defects = [issue for diagnostic in state["diagnostics"][before:] for issue in diagnostic.get("issues", [])]
+                status["generated"] += len(result["visuals"])
+                accepted = []
+                for index, visual in enumerate(result["visuals"]):
+                    local = []
+                    # New figures must have per-component evidence. Keep legacy
+                    # aggregate-only support only for previously stored reports.
+                    for key in ("nodes", "edges", "rows", "symbols"):
+                        for part_index, part in enumerate(visual[key]):
+                            if not part["evidence"]:
+                                local.append({"field": f"{key}.{part_index}.evidence", "code": "component_quote_missing_or_mismatched"})
+                    if visual["kind"] == "bar" and (not visual["dataset"] or not visual["metric"]):
+                        local.append({"field": "conditions", "code": "chart_conditions_missing"})
+                    checked = valid_visual(visual, valid_proofs, state["evidence"], primary_ids, issues=local)
+                    if checked and not local:
+                        accepted.append(checked)
+                    else:
+                        defects += [{**item, "field": f"visuals.{index}.{item['field']}"} for item in local]
+                status["issues"] = (status["issues"] + defects)[:32]
+                if accepted:
+                    data["visuals"] = accepted
+                    status["status"] = "pending_audit"
+                    break
+                if defects:
+                    status["status"] = "invalid_structure" if any(item["stage"] == "generate_visuals" and item["kind"] == "invalid_items" for item in state["diagnostics"][before:]) else "source_rejected"
+                else:
+                    # This is a model's decision, not proof of exhaustive source
+                    # absence. Explicit user visual requests cannot become N/A.
+                    status["status"] = "insufficient_evidence" if result["reason"] == "insufficient_evidence" else "not_generated"
+                    break
+            except Exception as error:
+                failure = classify_error(error)
+                record_failure(state, "generate_visuals", failure)
+                status["issues"] = (status["issues"] + failure.issues)[:32]
+                status["status"] = "invalid_structure" if failure.kind in {"invalid_structure", "malformed_output", "output_limit", "empty_response"} else "budget_exhausted" if failure.kind.endswith("budget") else "generation_failed"
+                if status["status"] == "budget_exhausted":
+                    status["budget_kind"] = failure.kind
+                if status["status"] != "invalid_structure":
+                    break
+    return {"report_data": data, "usage": state["usage"], "warnings": state["warnings"], "diagnostics": state["diagnostics"]}
+
+
 def audit_evidence(state: State) -> dict:
     state = _working_state(state)
     data = json.loads(json.dumps(state["report_data"]))
     claims = [{**claim, "section_key": section["key"]} for section in data["sections"] for claim in section["claims"]]
     visuals = data.get("visuals", [])
-    audit_items = claims + [{"text": visual_as_text(visual), "kind": "reported", "evidence": visual["evidence"], "is_visual": True} for visual in visuals]
+    audit_items = claims + [{"text": visual_as_text(visual), "kind": "reported", "evidence": visual["evidence"], "is_visual": True, "visual": visual} for visual in visuals]
     coverage = [{"question_index": index, "status": "partial", "assessment": "unverified", "evidence": [], "explanation": "Chưa đối chiếu lại câu hỏi với bản viết cuối." if state["report_language"] == "vi" else "Question not reconciled with the final written report."} for index in range(len(state["brief"]["questions"]))]
     data["quality_checks"] = []
-    if claims:
+    if audit_items:
         try:
             cited_ids = {proof["chunk_id"] for claim in audit_items for proof in claim["evidence"]}
             audit_chunks = [chunk for chunk in state["evidence"] if chunk["id"] in cited_ids]
-            audit = _call(state, ReportAudit, "Evaluate the WRITTEN REPORT, NOT the source paper's quality. For each quality_check with status pass, supply claim_indices in the relevant WRITTEN section and a SHORT exact report_excerpt copied from its prose that demonstrates the criterion. Source quotations are not report_excerpt. Critical_review MUST discuss concrete vulnerabilities, validity threats, untested generalizations or proxies of THIS proposed method, not weaknesses of competitors. 'LLMs are costly', 'SLMs reason poorly', and 'FINER-SQL is cheaper' are motivation/comparison, NOT critical review: mark partial/missing if that is all the limitations section contains. Reproducibility MUST describe checks/actions (data split, settings, baseline, ablation, failure inspection), not only hardware specs or a repository link. Check EVERY indexed claim and visual against exact quotations AND original cited chunks. supported means assertions, conditions, equations AND visual relationships are substantiated; partial/unsupported must not pass. For illustration judge clear labeling, scientific faithfulness and no claim of execution. Derived calculations are program-computed; check inputs/units/comparability and interpretation. For inference/recommendation judge transparency and evidential basis. Detect cherry-picking, contradictions, omitted conditions, unsupported causation. Exact substring is NOT proof of entailment. Give one short verdict per claim index. Re-assess EACH brief question based on WRITTEN supported claims, listing claim_indices and exact proofs. Never call it answered just because the source contains an omitted answer. Evaluate six quality_checks: explanation, methods, results, critical_review, reproducibility, visuals. pass requires explanation of causal/logical relationships, not headings or length. Use not_applicable only for genuinely irrelevant requirements. Keep reasons concise; never certify experiments or proofs.", {"claims": [{"claim_index": index, **claim} for index, claim in enumerate(audit_items)], "questions": state["brief"]["questions"], "intent": state["brief"]["intent"], "evidence": audit_chunks, "conflicts": state.get("conflicts", [])}, 4500).model_dump()
+            audit = _call(state, ReportAudit, "Evaluate the WRITTEN REPORT, NOT the source paper's quality. For each quality_check with status pass, supply claim_indices in the relevant WRITTEN section and a SHORT exact report_excerpt copied from its prose that demonstrates the criterion. Source quotations are not report_excerpt. Critical_review MUST discuss concrete vulnerabilities, validity threats, untested generalizations or proxies of THIS proposed method, not weaknesses of competitors. 'LLMs are costly', 'SLMs reason poorly', and 'FINER-SQL is cheaper' are motivation/comparison, NOT critical review: mark partial/missing if that is all the limitations section contains. Reproducibility MUST describe checks/actions (data split, settings, baseline, ablation, failure inspection), not only hardware specs or a repository link. Check EVERY indexed claim and visual against exact quotations AND original cited chunks. supported means assertions, conditions, equations AND visual relationships are substantiated; partial/unsupported must not pass. For illustration judge clear labeling, scientific faithfulness and no claim of execution. Derived calculations are program-computed; check inputs/units/comparability and interpretation. For inference/recommendation judge transparency and evidential basis. Detect cherry-picking, contradictions, omitted conditions, unsupported causation. Exact substring is NOT proof of entailment. Give one short verdict per claim index. Re-assess EACH brief question based on WRITTEN supported claims, listing claim_indices and exact proofs. Never call it answered just because the source contains an omitted answer. Evaluate six quality_checks: explanation, methods, results, critical_review, reproducibility, visuals. pass requires explanation of causal/logical relationships, not headings or length. Use not_applicable only for genuinely irrelevant requirements; when visuals_requested is true, missing/invalid figures are partial/missing, NEVER not_applicable. Keep reasons concise; never certify experiments or proofs.", {"claims": [{"claim_index": index, **claim} for index, claim in enumerate(audit_items)], "questions": state["brief"]["questions"], "intent": state["brief"]["intent"], "visuals_requested": _visual_requested(state), "evidence": audit_chunks, "conflicts": state.get("conflicts", [])}, 4500).model_dump()
             duplicates = {item["claim_index"] for item in audit["verdicts"] if sum(other["claim_index"] == item["claim_index"] for other in audit["verdicts"]) > 1}
             verdicts = {item["claim_index"]: item for item in audit["verdicts"] if item["claim_index"] not in duplicates}
             retained = {index for index, verdict in verdicts.items() if verdict["verdict"] == "supported" and 0 <= index < len(claims)}
@@ -549,6 +726,10 @@ def audit_evidence(state: State) -> dict:
                         accepted.append({**claim, "verification": "model_checked"})
                 section["claims"] = accepted
             data["visuals"] = [{**visual, "verification": "model_checked"} for index, visual in enumerate(visuals, start=len(claims)) if verdicts.get(index, {}).get("verdict") == "supported"]
+            if visuals:
+                visual_status = data.setdefault("visual_status", {"requested": _visual_requested(state), "attempts": 0, "generated": len(visuals), "issues": []})
+                visual_status.update(status="ready" if data["visuals"] else "audit_rejected", retained=len(data["visuals"]))
+                visual_status["issues"] = (visual_status["issues"] + [{"field": f"visuals.{index - len(claims)}", "code": "semantic_support_rejected" if verdicts.get(index) else "audit_verdict_missing"} for index in range(len(claims), len(audit_items)) if verdicts.get(index, {}).get("verdict") != "supported"])[:32]
             for item in audit.get("questions", []):
                 index = item["question_index"]
                 if not 0 <= index < len(coverage):
@@ -580,16 +761,20 @@ def audit_evidence(state: State) -> dict:
                         check.update(status="partial", explanation="Nội dung được giữ lại chưa giải thích đủ mục này; không đánh giá thay bằng chất lượng paper gốc." if state["report_language"] == "vi" else "The retained report does not explain this section sufficiently; source-paper quality cannot substitute for written analysis.")
                 if check["key"] == "visuals" and check["status"] == "pass" and not data["visuals"]:
                     check.update(status="partial", explanation="Chưa có hình có nguồn vượt qua kiểm tra." if state["report_language"] == "vi" else "No sourced visual survived the audit.")
-                if check["key"] == "visuals" and check["status"] == "not_applicable" and state.get("analysis_mode") == "paper" and state.get("research_domain") == "artificial-intelligence" and state.get("report_detail") != "concise" and not data["visuals"]:
-                    check.update(status="partial", explanation="Chế độ phân tích AI chi tiết yêu cầu ít nhất một sơ đồ hoặc bảng có nguồn, nhưng bản viết chưa có." if state["report_language"] == "vi" else "Detailed AI paper analysis requires at least one sourced diagram or table; none was retained.")
+                if check["key"] == "visuals" and check["status"] == "not_applicable" and _visual_requested(state) and not data["visuals"]:
+                    check.update(status="partial", explanation="Phiên này yêu cầu trực quan hóa nhưng chưa có hình qua kiểm chứng; không thể đánh dấu là không áp dụng." if state["report_language"] == "vi" else "This run requests visualization but has no verified figures; not applicable is not a valid substitute.")
             notes = "Trích đoạn khớp nguồn; model đã đối chiếu nhận xét. Chưa kiểm chứng độc lập thí nghiệm hay chứng minh." if state["report_language"] == "vi" else "Exact quotations matched; a model checked claim support. Not independent experimental or proof verification."
         except Exception as error:
             record_failure(state, "audit_evidence", error)
             notes = "Chỉ khớp trích đoạn; chưa thực hiện được đối chiếu ngữ nghĩa. Mọi nhận xét còn là sơ bộ." if state["report_language"] == "vi" else "Quote matching only; semantic audit unavailable. Treat all claims as provisional."
             state["warnings"].append(notes)
             data["visuals"] = []  # no unaudited graphs masquerading as facts
+            if visuals:
+                data.setdefault("visual_status", {}).update(status="audit_unavailable", retained=0)
     else:
         notes = "Chưa có nhận xét có bằng chứng; không tuyên bố đã kiểm chứng." if state["report_language"] == "vi" else "No supported claims available; no evidence audit was claimed."
+    if _visual_requested(state) and not any(check["key"] == "visuals" for check in data["quality_checks"]):
+        data["quality_checks"].append({"key": "visuals", "status": "partial", "explanation": "Chưa hoàn tất kiểm tra trực quan hóa." if state["report_language"] == "vi" else "Visualization review is incomplete."})
     data["diagram_claim_indices"] = list(range(min(6, len(next(section for section in data["sections"] if section["key"] == "mechanism")["claims"]))))
     data["metrics"] = report_metrics(data, state.get("report_detail", "detailed"))
     return {"report_data": data, "coverage": coverage, "usage": state["usage"], "warnings": state["warnings"], "audit_notes": notes, "diagnostics": state.get("diagnostics", [])}
@@ -600,13 +785,13 @@ def improve_report(state: State) -> dict:
     if state.get("report_detail", "detailed") == "concise":
         return {}
     checks = state["report_data"].get("quality_checks", [])
-    needs = [check for check in checks if check["status"] in {"partial", "missing"}]
+    needs = [check for check in checks if check["key"] != "visuals" and check["status"] in {"partial", "missing"}]
     short = state["report_data"].get("metrics", {}).get("length_status") == "below_target"
     if not (needs or short) or state["usage"]["llm_calls"] + 2 > state["budget"]["max_llm_calls"] or _expired(state):
         return {}
     # No repeated full-document reads. Expand a focused part, retaining all
     # already-written sections and prior proof IDs in the same selected ledger.
-    requirements = {"explanation": "answer", "methods": "mechanism", "results": "evidence", "critical_review": "limitations", "reproducibility": "next_steps", "visuals": "mechanism"}
+    requirements = {"explanation": "answer", "methods": "mechanism", "results": "evidence", "critical_review": "limitations", "reproducibility": "next_steps"}
     keys = list(dict.fromkeys([part["key"] for part in state["report_data"]["sections"] if not part["claims"]] +
                              [requirements[item["key"]] for item in needs if item["key"] in requirements]))[:3]
     if not keys:
@@ -624,12 +809,12 @@ def improve_report(state: State) -> dict:
     # Reserve the current prose + cited chunks for re-auditing and a bounded
     # allowance for the NEW explanation. Do not duplicate the entire finalized
     # report ledger (source bodies, diagnostics, metrics) into a repair request.
-    audit_reserve = _estimate(json.dumps(state["report_data"]["sections"], ensure_ascii=False)) + _estimate(json.dumps(state["evidence"], ensure_ascii=False))
+    audit_reserve = _estimate(json.dumps({key: state["report_data"].get(key, []) for key in ("sections", "visuals")}, ensure_ascii=False)) + _estimate(json.dumps(state["evidence"], ensure_ascii=False))
     repair_reserve = _estimate(json.dumps(existing_parts, ensure_ascii=False)) + _estimate(json.dumps(packet, ensure_ascii=False))
     if remaining_input < audit_reserve + repair_reserve + 10000 or remaining_output < 6500:
         return {}
     try:
-        revised = _call(state, ReportDraft, "Improve ONLY the requested weak or empty sections. Keep correct existing explanations and exact citations, add connected teaching paragraphs, equations/symbols, examples labeled illustration and concrete critical/reproduction checks where evidence permits. Give at least two substantive explanatory paragraphs per major section, not one-sentence summaries. Never fabricate or repeat to reach the word target. Include a useful sourced flow/table if requested by the quality review. Return only replacement sections you actually improve; <=8 claims/section, <=6000 characters/claim. Reviewer feedback is not evidence.", {"writing_format": "narrative", "existing_sections": existing_parts, "weak_checks": needs, "target_additional_words": max(400, state["report_data"]["metrics"]["target_words"][0] - state["report_data"]["metrics"]["word_count"] + 200), "section_keys": keys, "evidence": packet}, min(6000, max(300, state["budget"]["max_output_tokens"] - state["usage"]["output_tokens_reserved"] - 4000))).model_dump()
+        revised = _call(state, ReportDraft, "Improve ONLY the requested weak or empty prose sections. Keep correct existing explanations and exact citations, add connected teaching paragraphs, equations/symbols, examples labeled illustration and concrete critical/reproduction checks where evidence permits. Give at least two substantive explanatory paragraphs per major section, not one-sentence summaries. Never fabricate or repeat to reach the word target. Do not embed visual JSON; preserve existing figures separately. Return only replacement sections you actually improve; <=8 claims/section, <=6000 characters/claim. Reviewer feedback is not evidence.", {"writing_format": "narrative", "existing_sections": existing_parts, "weak_checks": needs, "target_additional_words": max(400, state["report_data"]["metrics"]["target_words"][0] - state["report_data"]["metrics"]["word_count"] + 200), "section_keys": keys, "evidence": packet}, min(6000, max(300, state["budget"]["max_output_tokens"] - state["usage"]["output_tokens_reserved"] - 4000))).model_dump()
         primary_ids = {source["id"] for source in state["sources"] if source.get("primary")} if state.get("analysis_mode") == "paper" else None
         validated = validate_draft(revised, state["evidence"], primary_ids)
         existing = state["report_data"]
@@ -691,7 +876,7 @@ def finalize_report(state: State) -> dict:
         stop_reason = "report_quality_incomplete" if coverage_complete else "final_coverage_incomplete"
     if outcome == "failed" and stop_reason not in {"primary_paper_unavailable", "no_readable_evidence"}:
         stop_reason = "analysis_failed" if any(item["stage"] == "draft_report" and item["kind"] not in {"invalid_items", "source_mismatch"} for item in diagnostics) else "no_supported_claims"
-    data.update(schema_version="3.0", outcome=outcome, diagnostics=diagnostics, language=state["report_language"], research_domain=state.get("research_domain", "general"), research_depth=state.get("research_depth", "standard"), report_detail=state.get("report_detail", "detailed"), dossier=state.get("dossier", []), external_visualization=arxiv_external(state.get("paper_input", "")), brief=state["brief"], coverage=state["coverage"], conflicts=state["conflicts"], sources=source_rows, evidence=state["evidence"], counts=counts, usage=usage, budget=state["budget"], stop_reason=stop_reason, warnings=list(dict.fromkeys(state["warnings"])), audit_notes=state["audit_notes"])
+    data.update(schema_version="3.1", outcome=outcome, diagnostics=diagnostics, language=state["report_language"], research_domain=state.get("research_domain", "general"), research_depth=state.get("research_depth", "standard"), report_detail=state.get("report_detail", "detailed"), dossier=state.get("dossier", []), external_visualization=arxiv_external(state.get("paper_input", "")), brief=state["brief"], coverage=state["coverage"], conflicts=state["conflicts"], sources=source_rows, evidence=state["evidence"], counts=counts, usage=usage, budget=state["budget"], stop_reason=stop_reason, warnings=list(dict.fromkeys(state["warnings"])), audit_notes=state["audit_notes"])
     if not long_enough and substantive:
         data["warnings"].append("Bản viết chưa đạt độ dài đã chọn; không thêm nội dung lặp hoặc thiếu dẫn chứng để bù." if vi else "The requested report length was not reached; no repetitive or unsupported padding was added.")
     if not quality_complete and substantive:
@@ -751,13 +936,14 @@ def finalize_report(state: State) -> dict:
 
 
 builder = StateGraph(State)
-for name, function in (("understand_brief", understand_brief), ("collect_evidence", collect_evidence), ("assess_coverage", assess_coverage), ("draft_report", draft_report), ("audit_evidence", audit_evidence), ("improve_report", improve_report), ("human_review_section", human_review_section), ("apply_editorial_feedback", apply_editorial_feedback), ("finalize_report", finalize_report)):
+for name, function in (("understand_brief", understand_brief), ("collect_evidence", collect_evidence), ("assess_coverage", assess_coverage), ("draft_report", draft_report), ("generate_visuals", generate_visuals), ("audit_evidence", audit_evidence), ("improve_report", improve_report), ("human_review_section", human_review_section), ("apply_editorial_feedback", apply_editorial_feedback), ("finalize_report", finalize_report)):
     builder.add_node(name, function)
 builder.add_edge(START, "understand_brief")
 builder.add_edge("understand_brief", "collect_evidence")
 builder.add_edge("collect_evidence", "assess_coverage")
 builder.add_conditional_edges("assess_coverage", route_coverage, ["collect_evidence", "draft_report"])
-builder.add_edge("draft_report", "audit_evidence")
+builder.add_edge("draft_report", "generate_visuals")
+builder.add_edge("generate_visuals", "audit_evidence")
 builder.add_edge("audit_evidence", "improve_report")
 builder.add_edge("improve_report", "human_review_section")
 builder.add_edge("human_review_section", "apply_editorial_feedback")

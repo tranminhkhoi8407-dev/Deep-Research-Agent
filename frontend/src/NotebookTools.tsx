@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, FilePlus2, FileText, GripVertical, Link2, Search } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, FilePlus2, FileText, GripVertical, Link2, Plus, Search } from "lucide-react";
 import type { Language } from "./ProductViews";
 import type { DomainResearchPayload, ResearchDomainId } from "./DomainHub";
 
@@ -139,9 +139,9 @@ export function NotebookSources({ language, references, canEdit, onInsert, onOpe
     {!references.evidence.length && <p>{vi ? "Thêm paper từ Library ở mục Evidence của dự án." : "Add saved Library papers from the project's Evidence tab."}</p>}
     {references.evidence.map(item => <article key={item.id}><strong>{item.title}</strong><a href={item.url} target="_blank" rel="noopener noreferrer"><Link2 size={13} />{item.doi || sourceDomain(item.url)}</a>{body.includes(item.url) && <small>{vi ? "Đã được trích dẫn trong trang" : "Cited on this page"}</small>}{canEdit && <button type="button" onClick={() => onInsert(`[${markdownLabel(item.title)}](${item.url})${item.doi ? ` · DOI: ${item.doi}` : ""}`)}>{vi ? "Chèn trích dẫn" : "Insert citation"}</button>}</article>)}
     <h3>{vi ? "Liên kết trang" : "Page links"}</h3>
-    {canEdit && references.pages.map(page => <button type="button" className="notebook-link-item" key={page.id} onClick={() => onInsert(`[${markdownLabel(page.title)}](#/collab/page/${page.id})`)}><FileText size={14} />{page.title}<span>+</span></button>)}
+    {canEdit && <div className="notebook-page-links">{references.pages.map(page => <button type="button" className="notebook-link-item" key={page.id} aria-label={(vi ? 'Chèn liên kết đến ' : 'Insert page link: ') + page.title} title={page.title} onClick={() => onInsert(`[${markdownLabel(page.title)}](#/collab/page/${page.id})`)}><span className="notebook-link-item__icon" aria-hidden="true"><FileText size={16} /></span><span className="notebook-link-item__title">{page.title}</span><span className="notebook-link-item__action" aria-hidden="true"><Plus size={15} /></span></button>)}</div>}
     <h3>{vi ? "Trang dẫn đến đây" : "Backlinks"}</h3>
-    {references.backlinks.length ? references.backlinks.map(page => <button type="button" className="notebook-link-item" key={page.id} onClick={() => onOpen(page.id)}><Link2 size={14} />{page.title}</button>) : <p className="collab-muted">{vi ? "Chưa có trang bạn được quyền xem liên kết tới đây." : "No accessible pages link here yet."}</p>}
+    {references.backlinks.length ? <div className="notebook-page-links">{references.backlinks.map(page => <button type="button" className="notebook-link-item" key={page.id} aria-label={(vi ? 'Mở trang liên kết: ' : 'Open linked page: ') + page.title} title={page.title} onClick={() => onOpen(page.id)}><span className="notebook-link-item__icon" aria-hidden="true"><Link2 size={16} /></span><span className="notebook-link-item__title">{page.title}</span><span className="notebook-link-item__action" aria-hidden="true"><ArrowRight size={15} /></span></button>)}</div> : <p className="collab-muted">{vi ? "Chưa có trang bạn được quyền xem liên kết tới đây." : "No accessible pages link here yet."}</p>}
   </div>;
 }
 

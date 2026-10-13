@@ -138,20 +138,33 @@ class Claim(BaseModel):
 class VisualNode(BaseModel):
     id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,24}$")
     label: str = Field(min_length=1, max_length=180)
+    explanation: str = Field(default="", max_length=1200)
+    inputs: str = Field(default="", max_length=400)
+    outputs: str = Field(default="", max_length=400)
+    evidence: list[Proof] = Field(default_factory=list, max_length=4)
 
 
 class VisualEdge(BaseModel):
     source: str = Field(max_length=25)
     target: str = Field(max_length=25)
     label: str = Field(default="", max_length=120)
+    evidence: list[Proof] = Field(default_factory=list, max_length=4)
 
 
 class VisualRow(BaseModel):
     cells: list[str] = Field(min_length=1, max_length=6)
+    explanation: str = Field(default="", max_length=800)
+    evidence: list[Proof] = Field(default_factory=list, max_length=4)
+
+
+class VisualSymbol(BaseModel):
+    symbol: str = Field(min_length=1, max_length=120)
+    meaning: str = Field(min_length=1, max_length=800)
+    evidence: list[Proof] = Field(min_length=1, max_length=4)
 
 
 class ReportVisual(BaseModel):
-    kind: Literal["flow", "table", "bar"]
+    kind: Literal["flow", "table", "bar", "equation"]
     title: str = Field(min_length=1, max_length=180)
     caption: str = Field(min_length=1, max_length=1000)
     section_key: Literal["answer", "scope", "mechanism", "evidence", "limitations", "next_steps"]
@@ -162,6 +175,12 @@ class ReportVisual(BaseModel):
     rows: list[VisualRow] = Field(default_factory=list, max_length=10)
     unit: str = Field(default="", max_length=60)
     conditions: str = Field(default="", max_length=800)
+    # One chart = one evaluation setting. Never join incompatible experiments.
+    dataset: str = Field(default="", max_length=240)
+    metric: str = Field(default="", max_length=240)
+    equation: str = Field(default="", max_length=2000)
+    explanation: str = Field(default="", max_length=1200)
+    symbols: list[VisualSymbol] = Field(default_factory=list, max_length=10)
 
 
 SECTION_KEYS = ("answer", "scope", "mechanism", "evidence", "limitations", "next_steps")
@@ -182,6 +201,12 @@ class ReportDraft(BaseModel):
     # Nodes reference validated mechanism claims. No invented numeric chart data.
     diagram_claim_indices: list[int] = Field(default_factory=list, max_length=8)
     visuals: list[ReportVisual] = Field(default_factory=list, max_length=6)
+
+
+class VisualDraft(BaseModel):
+    """A small visual-only response; never compete with long narrative prose."""
+    visuals: list[ReportVisual] = Field(max_length=2)
+    reason: Literal["created", "insufficient_evidence"] = "created"
 
 
 class ClaimVerdict(BaseModel):

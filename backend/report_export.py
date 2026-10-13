@@ -19,8 +19,10 @@ from urllib.parse import urlsplit
 import mistune
 from pydantic import ValidationError
 from agent.research_contract import SECTION_TITLES, SECTION_KEYS, ReportVisual
+from agent.report_quality import visual_proofs
+from agent.report_math import safe_math
 
-TEMPLATE_VERSION = "nexora-tex-2"
+TEMPLATE_VERSION = "nexora-tex-3"
 _compile_slots = threading.BoundedSemaphore(2)
 _locks_guard = threading.Lock()
 _locks: dict[str, threading.Lock] = {}
@@ -41,37 +43,6 @@ def escape(value):
     return "".join(mapping.get(char, "[U+" + format(ord(char), "04X") + "]" if unicodedata.category(char) == "Co" else char) for char in text)
 
 
-MATH_COMMANDS = set("frac dfrac tfrac sqrt left right mathbb mathcal mathbf mathrm mathit mathsf boldsymbol operatorname text textrm textbf overline underline hat widehat tilde widetilde vec dot ddot overset underset substack stackrel sum prod int iint iiint oint lim log ln exp min max arg det sin cos tan sinh cosh tanh underbrace overbrace binom dbinom ldots cdots vdots ddots dots quad qquad begin end hline lVert rVert vert Vert langle rangle lceil rceil lfloor rfloor le leq ge geq neq ne ll gg approx sim simeq equiv propto in notin subset subseteq supset supseteq cup cap emptyset varnothing forall exists neg land lor to rightarrow leftarrow Rightarrow Leftarrow leftrightarrow Leftrightarrow mapsto times cdot div pm mp partial nabla infty ell Re Im mid perp top bot angle alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta iota kappa lambda mu nu xi pi varpi rho varrho sigma varsigma tau upsilon phi varphi chi psi omega Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega geqslant leqslant displaystyle textstyle scriptscriptstyle limits nolimits tag nonumber notag big Big bigg Bigg bigl bigr Bigl Bigr biggl biggr Biggl Biggr coloneqq triangleq".split())
-MATH_ENVS = {"aligned", "split", "cases", "matrix", "pmatrix", "bmatrix", "vmatrix", "Bmatrix", "Vmatrix", "array"}
-
-
-def safe_math(raw):
-    if len(raw) > 12000 or raw.count("{") != raw.count("}") or raw.count("{") > 200 or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", raw):
-        return None
-    if any(command not in MATH_COMMANDS for command in re.findall(r"\\([A-Za-z]+)", raw)):
-        return None
-    if any(env not in MATH_ENVS for env in re.findall(r"\\(?:begin|end)\{([^}]+)\}", raw)):
-        return None
-    if re.search(r"(?<!\\)[%#]", raw) or "^^" in raw or "\x00" in raw:
-        return None
-    depth = 0
-    for match in re.finditer(r"\\.|[{}]", raw):
-        char = match.group()
-        if char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth < 0:
-                return None
-    environments = []
-    for action, env in re.findall(r"\\(begin|end)\{([^}]+)\}", raw):
-        if action == "begin":
-            environments.append(env)
-        elif not environments or environments.pop() != env:
-            return None
-    if depth or environments:
-        return None
-    return raw
 
 
 def safe_url(value):
@@ -157,7 +128,7 @@ def prose_tex(text):
     return render(parser(text))
 
 
-def visual_tex(visual, vi):
+def visual_tex(visual, vi, citations=lambda proofs: ""):
     annotations_omitted = bool(visual.get("omitted_numeric_annotations"))
     # Sidecars can outlive a schema revision or be malformed. Never interpolate
     # unchecked model node identifiers into trusted TikZ/PGF commands.
@@ -167,6 +138,11 @@ def visual_tex(visual, vi):
             ids = [node["id"] for node in visual["nodes"]]
             if len(ids) < 2 or len(ids) != len(set(ids)) or not visual["edges"] or any(edge["source"] not in ids or edge["target"] not in ids for edge in visual["edges"]):
                 raise ValueError("Invalid flow topology")
+        elif visual["kind"] == "equation":
+            if not visual["symbols"] or not visual["explanation"] or safe_math(visual["equation"]) is None:
+                raise ValueError("Invalid or unsafe equation")
+            if any(safe_math(symbol["symbol"]) is None for symbol in visual["symbols"]):
+                raise ValueError("Invalid or unsafe symbol")
         else:
             if len(visual["columns"]) < 2 or not visual["rows"] or any(len(row["cells"]) != len(visual["columns"]) for row in visual["rows"]):
                 raise ValueError("Invalid table shape")
@@ -198,9 +174,31 @@ def visual_tex(visual, vi):
         labels = ",".join("{" + escape(row["cells"][0]) + "}" for row in rows)
         coords = " ".join("(" + str(float(row["cells"][1].replace(",", "."))) + "," + str(index + 1) + ")" for index, row in enumerate(rows))
         body = r"\begin{center}\begin{tikzpicture}\begin{axis}[xbar,width=10.5cm,height=" + str(max(4, len(rows) * 0.65 + 1.5)) + "cm,xmin=0,ytick={" + ticks + "},yticklabels={" + labels + r"},yticklabel style={font=\scriptsize,text width=4cm,align=right},xlabel={" + escape(visual["unit"]) + r"},nodes near coords,point meta=x,axis lines*=left]" + "\n" + r"\addplot[fill=blue!35,draw=blue!65] coordinates {" + coords + r"};\end{axis}\end{tikzpicture}\end{center}"
+    elif visual["kind"] == "equation":
+        body = r"\[" + visual["equation"] + r"\]" + "\n" + prose_tex(visual["explanation"])
     else:
         body = table_tex(visual["columns"], [row["cells"] for row in visual["rows"]])
-    return title + body + "\n" + caption + (r"\noindent\textit{" + escape(visual["conditions"]) + "}\n" if visual.get("conditions") else "")
+    # The PDF is a complete static equivalent, not a screenshot of the current
+    # web selection. Preserve every explanatory detail and its exact location.
+    details = []
+    for node in visual["nodes"] if visual["kind"] == "flow" else []:
+        if node["explanation"] or node["inputs"] or node["outputs"]:
+            details.append(r"\paragraph{" + escape(node["label"]) + "}\n" + prose_tex(node["explanation"]))
+            for field, label in (("inputs", "Đầu vào" if vi else "Input"), ("outputs", "Đầu ra" if vi else "Output")):
+                if node[field]:
+                    details.append(r"\textbf{" + label + ":} " + escape(node[field]) + r"\par")
+            details.append(citations(node["evidence"]))
+    for edge in visual["edges"] if visual["kind"] == "flow" else []:
+        if edge["evidence"]:
+            node_labels = {node["id"]: node["label"] for node in visual["nodes"]}
+            details.append(prose_tex(node_labels[edge["source"]] + " -> " + node_labels[edge["target"]] + ": " + edge["label"]) + citations(edge["evidence"]))
+    for row in visual["rows"] if visual["kind"] in {"table", "bar"} else []:
+        if row["explanation"] or row["evidence"]:
+            details.append(r"\paragraph{" + escape(row["cells"][0]) + "}\n" + prose_tex(row["explanation"]) + citations(row["evidence"]))
+    for symbol in visual["symbols"] if visual["kind"] == "equation" else []:
+        details.append("$" + symbol["symbol"] + "$: " + escape(symbol["meaning"]) + citations(symbol["evidence"]))
+    context = "; ".join(visual[key] for key in ("dataset", "metric", "unit", "conditions") if visual[key])
+    return title + body + "\n" + caption + (r"\noindent\textit{" + escape(context) + "}\n" if context else "") + "\n".join(details)
 
 
 def render_latex(data, legacy=""):
@@ -208,7 +206,7 @@ def render_latex(data, legacy=""):
     labels = {"reported": "Nguồn báo cáo" if vi else "Source-reported", "inference": "Suy luận" if vi else "Inference", "recommendation": "Đề xuất có điều kiện" if vi else "Conditional recommendation", "illustration": "Ví dụ tự tạo - chưa chạy thực nghiệm" if vi else "Self-created illustration - not executed", "derived": "Tính toán từ số liệu nguồn" if vi else "Calculation from sourced inputs"}
     evidence_index = {chunk["id"]: chunk for chunk in data.get("evidence", [])}
     proofs = [proof for section in data.get("sections", []) for claim in section["claims"] for proof in claim["evidence"]]
-    proofs += [proof for visual in data.get("visuals", []) if visual.get("verification") == "model_checked" for proof in visual["evidence"]]
+    proofs += [proof for visual in data.get("visuals", []) if visual.get("verification") == "model_checked" for proof in visual_proofs(visual)]
     used_ids = {evidence_index.get(proof["chunk_id"], {}).get("source_id") for proof in proofs}
     source_index = {source["id"]: (index + 1, source) for index, source in enumerate(source for source in data.get("sources", []) if source["id"] in used_ids)}
 
@@ -240,7 +238,7 @@ def render_latex(data, legacy=""):
                 body.append(citations(claim["evidence"]))
             for visual in data.get("visuals", []):
                 if visual["section_key"] == section["key"] and visual.get("verification") == "model_checked":
-                    body.append(visual_tex(visual, vi))
+                    body.append(visual_tex(visual, vi, citations))
                     body.append(citations(visual["evidence"]))
     else:
         body.append(prose_tex(legacy))

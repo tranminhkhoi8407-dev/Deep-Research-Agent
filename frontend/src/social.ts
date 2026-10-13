@@ -14,7 +14,7 @@ export function relationshipAction(friendship?: Friendship) {
 }
 
 export function safeSocialHref(href: string | null): string | null {
-  return href && /^#\/collab\/(?:people|(?:project|page|group)\/[a-f0-9]{32})$/.test(href) ? href : null;
+  return href && /^#\/collab\/(?:people|page\/[a-f0-9]{32}|(?:project|group)\/[a-f0-9]{32}(?:\?view=(?:discussion|meetings))?)$/.test(href) ? href : null;
 }
 
 export function relativeTime(value: string, vi: boolean, current = Date.now()) {
@@ -41,6 +41,10 @@ export function notificationText(item: NotificationItem, vi: boolean) {
     case 'invite.received': return vi ? `${person} mời bạn cộng tác${item.title ? ` · ${item.title}` : ''}` : `${person} invited you to collaborate${item.title ? ` · ${item.title}` : ''}`;
     case 'invite.accepted': return vi ? `${person} đã chấp nhận lời mời${item.title ? ` · ${item.title}` : ''}` : `${person} accepted your invitation${item.title ? ` · ${item.title}` : ''}`;
     case 'task.assigned': return vi ? `${person} giao cho bạn nhiệm vụ · ${item.title}` : `${person} assigned you a task · ${item.title}`;
+    case 'chat.mention': return vi ? `${person} nhắc đến bạn · ${item.title}` : `${person} mentioned you · ${item.title}`;
+    case 'chat.reply': return vi ? `${person} trả lời trong thread của bạn · ${item.title}` : `${person} replied to your thread · ${item.title}`;
+    case 'meeting.scheduled': return vi ? `${person} lên lịch họp · ${item.title}` : `${person} scheduled a meeting · ${item.title}`;
+    case 'meeting.updated': return vi ? `${person} cập nhật lịch / biên bản · ${item.title}` : `${person} updated a meeting / minutes · ${item.title}`;
     default: return vi ? 'Có cập nhật mới' : 'New update';
   }
 }

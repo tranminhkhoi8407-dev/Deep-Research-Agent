@@ -832,8 +832,15 @@
 .notebook-sources h3:not(:first-child) { margin-top: 25px; }
 .notebook-sources a { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--blue); overflow-wrap: anywhere; }
 .notebook-sources strong { font-size: 14px; }
-.notebook-link-item { display: flex; width: 100%; margin: 6px 0; white-space: normal; text-align: left; justify-content: start; font-size: 13px; }
-.notebook-link-item span { margin-left: auto; }
+.notebook-page-links { display: grid; gap: 8px; margin: 12px 0 18px; min-width: 0; }
+.notebook-sources button.notebook-link-item { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 48px; margin: 0; padding: 9px 11px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; line-height: 1.5; text-align: left; cursor: pointer; transition: background .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.notebook-sources button.notebook-link-item:hover { background: color-mix(in srgb, var(--blue) 4%, var(--surface)); border-color: color-mix(in srgb, var(--blue) 32%, var(--line)); box-shadow: 0 2px 7px color-mix(in srgb, var(--blue) 6%, transparent); }
+.notebook-sources button.notebook-link-item:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.notebook-link-item__icon { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border-radius: 7px; background: var(--blue-soft); color: var(--blue); }
+.notebook-link-item__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notebook-link-item__action { display: grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 6px; color: var(--muted); }
+.notebook-link-item:hover .notebook-link-item__action, .notebook-link-item:focus-visible .notebook-link-item__action { color: var(--blue); background: var(--blue-soft); }
+@media (prefers-reduced-motion: reduce) { .notebook-sources button.notebook-link-item { transition: none; } }
 .notebook-brief label { display: grid; gap: 7px; margin: 10px 0; }
 .notebook-brief fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 15px 0; max-height: 280px; overflow: auto; }
 .notebook-brief legend { color: var(--muted); font-size: 14px; padding: 0 5px; }

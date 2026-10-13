@@ -45,9 +45,12 @@ def public_addresses(url: str) -> list[str]:
     return addresses
 
 
-def fetch_public(url: str, *, limit: int = MAX_BYTES, timeout: float = 15) -> tuple[bytes, str, str]:
+def fetch_public(url: str, *, limit: int = MAX_BYTES, timeout: float = 15, deadline_seconds: float | None = None) -> tuple[bytes, str, str]:
     current = canonical_url(url)
+    started = time.monotonic()
     for _ in range(5):
+        if deadline_seconds is not None and time.monotonic() - started > deadline_seconds:
+            raise ValueError('Download deadline exceeded.')
         parsed = urlsplit(current)
         address = public_addresses(current)[0]
         ip_host = f"[{address}]" if ":" in address else address
@@ -62,6 +65,8 @@ def fetch_public(url: str, *, limit: int = MAX_BYTES, timeout: float = 15) -> tu
                     raise ValueError("Document exceeds the download limit.")
                 result = bytearray()
                 for block in response.iter_bytes():
+                    if deadline_seconds is not None and time.monotonic() - started > deadline_seconds:
+                        raise ValueError('Download deadline exceeded.')
                     result.extend(block)
                     if len(result) > limit:
                         raise ValueError("Document exceeds the download limit.")

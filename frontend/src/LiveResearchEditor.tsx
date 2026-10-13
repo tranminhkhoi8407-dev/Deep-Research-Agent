@@ -8,7 +8,7 @@ import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { createReactBlockSpec, useCreateBlockNote, getDefaultReactSlashMenuItems, SuggestionMenuController, SideMenuController, SideMenu, FormattingToolbarController, FormattingToolbar, blockTypeSelectItems } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/mantine";
 import { createReactInlineMathSpec, createReactMathBlockSpec, getMathSlashMenuItems, getMathBlockTypeSelectItems } from "@blocknote/math-block";
-import { FilePlus2, Plus } from "lucide-react";
+import { FilePlus2, ImagePlus, Link2, LoaderCircle, Plus, X } from "lucide-react";
 import { equationSource, freshBlockCopy, inlineEquationInput, inlineEquationParts, mathMarkdownProjection } from './notebookMath';
 import { NotebookBlockMenu } from './NotebookBlockMenu';
 import { NotebookPageIcon, type NotebookPageInfo, type NotebookPageAction } from './NotebookPageIcon';
@@ -16,6 +16,9 @@ import type { Language } from "./ProductViews";
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/mantine/style.css";
 import './NotebookEditor.css';
+import { NotebookMediaContext, NotebookMediaDialog, notebookImageSpec, notebookURLSpec } from './NotebookMedia';
+import { useNotebookMedia } from './useNotebookMedia';
+import { notebookMediaError, safeNotebookURL } from './notebookMediaModel';
 
 const LegacyMarkdownEditor = lazy(() => import("./LegacyMarkdownEditor"));
 const PageLinks = createContext<{ onOpen?: (id: string) => void; onCreateUnder?: (id: string) => void; href?: (id: string) => string; language: Language; pages?: NotebookPageInfo[] }>({ language: 'en' });
@@ -33,7 +36,8 @@ const pageLinkSpec = createReactBlockSpec({ type: 'pageLink', propSchema: { page
   toExternalHTML: ({ block }) => <a href={`#/collab/page/${block.props.pageId}`}>{block.props.title}</a>,
 })();
 
-// Media uploads are deliberately excluded: inserting a file must not publish it.
+// Only our private-page image block is allowed; arbitrary remote image/file
+// blocks remain excluded so pasted HTML cannot trigger third-party requests.
 const { audio: _audio, video: _video, image: _image, file: _file, ...textBlocks } = defaultBlockSpecs;
 const notionMathInput = createExtension({
   key: 'notebook-inline-equation',
@@ -48,7 +52,7 @@ const schema = BlockNoteSchema.create({
   // Disable the package's single-$ and $$-space shortcuts: they fire before
   // Notion's closing $$ and can turn a partially typed inline formula into a block.
   // BlockNote 0.55 registers spec extensions through blockSpecs only.
-  blockSpecs: { ...textBlocks, pageLink: pageLinkSpec, mathBlock: { ...createReactMathBlockSpec(), extensions: [notionMathInput] } },
+  blockSpecs: { ...textBlocks, pageLink: pageLinkSpec, notebookImage: notebookImageSpec, webLink: notebookURLSpec, mathBlock: { ...createReactMathBlockSpec(), extensions: [notionMathInput] } },
   inlineContentSpecs: { ...defaultInlineContentSpecs, math: { ...createReactInlineMathSpec(), extensions: [] } },
 });
 export type NotebookBlock = typeof schema.Block;
@@ -214,7 +218,15 @@ function BlockNotebook({ initial, ...props }: Props & { initial: DocumentRespons
           if (message.type === "permission") { allowed = latest.current.canEdit && message.access >= 3; setWritable(allowed); if (!allowed) setError("Editing access was revoked. You can still read and export."); }
           if (message.type === "ack") { pending.delete(message.id); acknowledgedRevision = Math.max(acknowledgedRevision, message.revision || 0); syncStatus(); }
           if (message.type === "tree") latest.current.onPageTreeChanged?.();
-          if (message.type === "error") setError(message.message || "Update rejected");
+          if (message.type === "error") {
+            if (typeof message.id === 'string') {
+              // Do not claim a rejected image update is saved. Keep a full
+              // repair snapshot queued for the user's next edit/removal; no
+              // automatic resubmission of the rejected image reference.
+              pending.delete(message.id); queued = [Y.encodeStateAsUpdate(doc)]; syncStatus();
+            }
+            setError(message.message || "Update rejected");
+          }
         } catch { setError("Could not read the live update. Reload if the problem persists."); }
       };
       socket.onclose = event => {
@@ -251,6 +263,10 @@ function RichCanvas({ doc, writable, revision, synced, exportRef, ...props }: Pr
   const indexTimer = useRef<ReturnType<typeof setTimeout>>();
   const exportCounter = useRef(0);
   const editor = useCreateBlockNote(withCollaboration({ schema, domAttributes: { editor: { "aria-label": "Research notebook content" } }, collaboration: { fragment: doc.getXmlFragment("notebook"), user: { name: props.username || "Researcher", color: "#476cf1" } } }), [doc]);
+  const media = useNotebookMedia(editor, props.apiBase, props.pageId, writable);
+  const [imagePreview, setImagePreview] = useState<{ url: string; name: string } | null>(null);
+  const previewDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (imagePreview && !previewDialog.current?.open) previewDialog.current?.showModal(); }, [imagePreview]);
   const [conversionError, setConversionError] = useState('');
   const convertingBlocks = useRef(new Set<string>());
   const convertToPage = async (blockId: string) => {
@@ -337,24 +353,51 @@ function RichCanvas({ doc, writable, revision, synced, exportRef, ...props }: Pr
     const operation = props.operation;
     if (!writable || !operation || operation.id === appliedOperation.current) return;
     let cancelled = false;
-    void Promise.resolve().then(() => operation.blocks ? BlockNoteEditor.create({ schema, initialContent: operation.blocks }).document : parseNotebookMarkdown(editor, operation.content)).then(blocks => {
+    void Promise.resolve().then(() => operation.blocks ? BlockNoteEditor.create({ schema, initialContent: operation.blocks }).document : parseNotebookMarkdown(editor, operation.content)).then(async blocks => {
+      const authorizeMedia = async (items: typeof blocks) => {
+        for (const block of items) {
+          if (cancelled || !editor.isEditable) return;
+          if (block.type === 'notebookImage') await documentRequest(props.apiBase, `/pages/${props.pageId}/images/${encodeURIComponent(block.props.assetId)}/attach`, { method: 'POST' });
+          if (block.type === 'webLink' && !safeNotebookURL(block.props.url)) throw Error('Invalid URL');
+          if (block.children.length) await authorizeMedia(block.children);
+        }
+      };
+      await authorizeMedia(blocks);
       if (cancelled || !editor.isEditable || !blocks.length) return;
       appliedOperation.current = operation.id;
       if (operation.mode === "replace") editor.replaceBlocks(editor.document, blocks);
       else editor.insertBlocks(blocks, editor.document[editor.document.length - 1], "after");
-    }).catch(() => { window.alert(latest.current.language === "vi" ? "Không đọc được nội dung nhập. Trang hiện tại vẫn được giữ." : "Could not read the imported content. The current page is preserved."); });
+    }).catch(() => { if (!cancelled) setConversionError(latest.current.language === "vi" ? "Không nhập được nội dung hoặc ảnh không còn được phép xem. Trang hiện tại vẫn được giữ." : "Content could not be imported, or image access is unavailable. The current page is preserved."); });
     return () => { cancelled = true; };
   }, [editor, props.operation, writable]);
   return <>
     {conversionError && <p role="alert" className="collab-inline-error">{conversionError}</p>}
+    {writable && <div className="notebook-media-tools"><button type="button" disabled={media.busy} onClick={() => media.open('image')}><ImagePlus size={16} />{props.language === 'vi' ? 'Ảnh' : 'Image'}</button><button type="button" disabled={media.busy} onClick={() => media.open('link')}><Link2 size={16} />{props.language === 'vi' ? 'Liên kết URL' : 'URL link'}</button>{media.busy && <span role="status"><LoaderCircle className="spin" size={15} />{props.language === 'vi' ? 'Đang lưu ảnh…' : 'Saving image…'}</span>}</div>}
+    {media.error && !media.mode && <p role="alert" className="notebook-media-error">{notebookMediaError(media.error, props.language === 'vi')}</p>}
+    {media.mode && <NotebookMediaDialog mode={media.mode} vi={props.language === 'vi'} busy={media.busy} error={media.error} onFiles={files => void media.uploadFiles(files)} onImageURL={url => void media.imageURL(url)} onLink={media.link} onClose={media.close} />}
+    <dialog ref={previewDialog} className="notebook-media-dialog notebook-media-preview" aria-label={props.language === 'vi' ? 'Xem ảnh notebook' : 'Notebook image preview'} onClose={() => setImagePreview(null)}><header><h2>{imagePreview?.name}</h2><button type="button" aria-label={props.language === 'vi' ? 'Đóng ảnh' : 'Close image'} onClick={() => previewDialog.current?.close()}><X size={20} /></button></header>{imagePreview && <img src={imagePreview.url} alt={imagePreview.name} referrerPolicy="no-referrer" />}</dialog>
     <PageLinks.Provider value={{ onOpen: props.onOpenPage, onCreateUnder: props.canEdit ? props.onCreateSubpageUnder : undefined, href: props.pageHref, language: props.language, pages: props.pages }}>
+    <NotebookMediaContext.Provider value={{ vi: props.language === 'vi', editable: writable, imageURL: id => `${props.apiBase}/api/collab/pages/${props.pageId}/images/${id}`, onPreview: (url, name) => setImagePreview({ url, name }) }}>
+    <div onPasteCapture={event => {
+      if (!writable || (event.target as HTMLElement).closest('input,textarea,[contenteditable="false"]')) return;
+      // Internal block copies must retain asset IDs, captions and saved sizing.
+      if (event.clipboardData.types.includes('blocknote/html')) return;
+      const files = Array.from(event.clipboardData.items).filter(item => item.kind === 'file').map(item => item.getAsFile()).filter((file): file is File => !!file);
+      const text = event.clipboardData.getData('text/plain').trim();
+      if (files.length) { event.preventDefault(); event.stopPropagation(); void media.uploadFiles(files, media.cursor()); }
+      else if (safeNotebookURL(text) && !editor.getSelection()) { event.preventDefault(); event.stopPropagation(); media.link(text, '', media.cursor()); }
+    }} onDragOverCapture={event => { if (writable && event.dataTransfer.types.includes('Files') && !event.dataTransfer.types.includes('blocknote/html')) event.preventDefault(); }} onDropCapture={event => { if (event.dataTransfer.types.includes('blocknote/html') || editor.prosemirrorView.dragging) return; if (writable && event.dataTransfer.files.length) { event.preventDefault(); event.stopPropagation(); void media.uploadFiles(Array.from(event.dataTransfer.files), media.cursor()); } }}>
     <BlockNoteView editor={editor} editable={writable} theme={theme} slashMenu={false} sideMenu={false} formattingToolbar={false} onChange={() => void publish()}>
       <SideMenuController sideMenu={BlockSideMenu} />
       <FormattingToolbarController formattingToolbar={BlockFormattingToolbar} />
       <SuggestionMenuController triggerCharacter="/" getItems={async query => filterSuggestionItems([
+        { title: props.language === 'vi' ? 'Ảnh' : 'Image', subtext: props.language === 'vi' ? 'Dán, tải lên hoặc nhập URL ảnh' : 'Paste, upload or import an image URL', aliases: ['image', 'photo', 'anh', 'upload'], group: 'Media', icon: <ImagePlus size={18} />, onItemClick: () => media.open('image') },
+        { title: props.language === 'vi' ? 'Liên kết URL' : 'URL link', subtext: props.language === 'vi' ? 'Chèn thẻ liên kết website' : 'Insert a website link card', aliases: ['url', 'link', 'bookmark', 'embed'], group: 'Media', icon: <Link2 size={18} />, onItemClick: () => media.open('link') },
         ...(props.onCreateSubpage ? [{ title: props.language === 'vi' ? 'Trang con' : 'Subpage', subtext: props.language === 'vi' ? 'Tạo tài liệu bên trong trang này' : 'Create a page inside this page', aliases: ['page', 'subpage', 'trang', 'notebook'], group: 'Notebook', icon: <FilePlus2 size={18} />, onItemClick: props.onCreateSubpage }] : []),
         ...getDefaultReactSlashMenuItems(editor), ...getMathSlashMenuItems(editor).map((item, index) => ({ ...item, title: index === 0 ? 'Block equation' : (props.language === 'vi' ? 'Công thức trong dòng' : 'Inline equation'), aliases: [...(item.aliases || []), 'math', 'equation', 'latex', 'cong thuc'] }))], query)} />
     </BlockNoteView>
+    </div>
+    </NotebookMediaContext.Provider>
     </PageLinks.Provider>
   </>;
 }

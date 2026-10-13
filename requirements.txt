@@ -15,6 +15,7 @@ wikipedia>=1.4.0
 # khong can 2 package nay tru khi ban doi co SECOND_SOURCE)
 arxiv>=2.1
 pymupdf>=1.24
+Pillow>=11.0
 
 # v3 (long-term memory)
 # Latest available release on PyPI at the moment is 0.0.39; 0.3+ does not exist.

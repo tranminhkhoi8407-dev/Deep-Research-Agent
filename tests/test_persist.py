@@ -38,6 +38,7 @@ def fake_root(tmp_path, monkeypatch):
         target.write_bytes(content)
     persist._boot_restored_at = None
     persist._last_upload_at = 0.0
+    persist._last_fingerprint = None
     return tmp_path
 
 
@@ -298,6 +299,8 @@ class _FakeGitHubClient:
         self.files = files
         self.calls = calls
         self.default_branch = default_branch
+        self.no_inline: set[str] = set()
+        self.blobs: dict[str, bytes] = {}
 
     def __enter__(self):
         return self
@@ -314,6 +317,12 @@ class _FakeGitHubClient:
         import base64 as _base64
 
         headers = headers or {}
+        if "/git/blobs/" in url:
+            sha = url.rsplit("/", 1)[1]
+            self.calls.append(("GET", "@blob:" + sha, dict(headers), dict(params or {})))
+            if sha in self.blobs:
+                return _FakeResponse(200, json.dumps({"sha": sha, "encoding": "base64", "content": _base64.b64encode(self.blobs[sha]).decode()}).encode())
+            return _FakeResponse(404, b"")
         if url.startswith("https://api.github.com/repos/") and "/contents/" not in url:
             self.calls.append(("GET", "@repo", dict(headers), dict(params or {})))
             return _FakeResponse(200, json.dumps({"default_branch": self.default_branch}).encode())
@@ -321,9 +330,11 @@ class _FakeGitHubClient:
         self.calls.append(("GET", path, dict(headers), dict(params or {})))
         if path not in self.files:
             return _FakeResponse(404, b"")
-        if headers.get("Accept") == "application/vnd.github.raw":
-            return _FakeResponse(200, self.files[path])
-        payload = {"sha": "sha-" + path, "content": _base64.b64encode(self.files[path]).decode()}
+        payload: dict[str, object] = {"sha": _fake_sha(path), "size": len(self.files[path])}
+        if path not in self.no_inline:
+            payload.update({"encoding": "base64", "content": _base64.b64encode(self.files[path]).decode()})
+        else:
+            payload.update({"truncated": True})
         return _FakeResponse(200, json.dumps(payload).encode())
 
     def put(self, url, headers=None, json=None):
@@ -334,9 +345,11 @@ class _FakeGitHubClient:
         body = json or {}
         if "content" not in body or "branch" not in body:
             return _FakeResponse(422, b"")
-        if path in self.files and body.get("sha") != "sha-" + path:
+        if path in self.files and body.get("sha") != _fake_sha(path):
             return _FakeResponse(409, b"")
-        self.files[path] = _base64.b64decode(body["content"])
+        content = _base64.b64decode(body["content"])
+        self.files[path] = content
+        self.blobs[_fake_sha(path)] = content
         return _FakeResponse(201, b"")
 
     def delete(self, url, headers=None, json=None):
@@ -345,10 +358,17 @@ class _FakeGitHubClient:
         body = json or {}
         if path not in self.files:
             return _FakeResponse(404, b"")
-        if body.get("sha") != "sha-" + path:
+        if body.get("sha") != _fake_sha(path):
             return _FakeResponse(409, b"")
         del self.files[path]
+        self.blobs.pop(_fake_sha(path), None)
         return _FakeResponse(200, b"")
+
+
+def _fake_sha(path: str) -> str:
+    import hashlib as _hashlib
+
+    return _hashlib.sha256(("blob:" + path).encode()).hexdigest()
 
 
 class _FakeResponse:
@@ -370,19 +390,20 @@ def github_api(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     files: dict[str, bytes] = {}
     calls: list = []
+    clients: list = [_FakeGitHubClient(files, calls)]
 
     def factory(*args, **kwargs):
-        return _FakeGitHubClient(files, calls)
+        return clients[0]
 
     import httpx
 
     monkeypatch.setattr(httpx, "Client", factory)
     assert persist._backend_kind() == "github"
-    return files, calls
+    return files, calls, clients
 
 
 def test_github_fetch_roundtrip(github_api):
-    files, calls = github_api
+    files, calls, _ = github_api
     assert persist._remote_fetch("snapshot.meta.json") == (404, b"")
     assert persist._remote_store("snapshot.meta.json", b'{"a":1}') == 201
     assert persist._remote_fetch("snapshot.meta.json") == (200, b'{"a":1}')
@@ -396,15 +417,26 @@ def test_github_fetch_roundtrip(github_api):
 
 
 def test_github_update_sends_sha(github_api):
-    files, calls = github_api
+    files, calls, _ = github_api
     files["snapshots/snapshot.meta.json"] = b"old"
     assert persist._remote_store("snapshot.meta.json", b"new") in (200, 201)
     put_calls = [call for call in calls if call[0] == "PUT"]
     assert put_calls[0][1] == "snapshots/snapshot.meta.json"
-    assert put_calls[0][3]["sha"] == "sha-snapshots/snapshot.meta.json"
+    assert put_calls[0][3]["sha"] == _fake_sha("snapshots/snapshot.meta.json")
     assert put_calls[0][3]["branch"] == "main"
     status, content = persist._remote_fetch("snapshot.meta.json")
     assert (status, content) == (200, b"new")
+
+
+def test_github_fetch_uses_blob_api_for_large_files(github_api):
+    files, calls, clients = github_api
+    data = bytes(range(256)) * 64
+    assert persist._remote_store("big.bin", data) in (200, 201)
+    clients[0].no_inline.add("snapshots/big.bin")
+    status, content = persist._remote_fetch("big.bin")
+    assert status == 200
+    assert content == data
+    assert any(call[0] == "GET" and call[1].startswith("@blob:") for call in calls)
 
 
 def test_github_uses_repo_default_branch(monkeypatch):

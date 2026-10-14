@@ -51,6 +51,10 @@ _uploader_lock = threading.Lock()
 _last_upload_at = 0.0
 # created_at of the snapshot restored by this boot (None when no restore ran).
 _boot_restored_at: str | None = None
+# (mtime_ns, size) per snapshotted file right after the last upload/restore.
+# Wall-clock/mtime-float comparisons can miss same-tick writes forever, so
+# change detection compares content identity instead.
+_last_fingerprint: dict[str, tuple[int, int]] | None = None
 
 
 def project_root() -> Path:
@@ -200,20 +204,66 @@ def _github_paths(name: str) -> tuple[str, str]:
     return f"https://api.github.com/repos/{repo}/contents/{quote(path, safe='/')}", path
 
 
+def _github_blob(name: str, sha: str, timeout: float) -> tuple[int, bytes]:
+    """Download a blob by SHA (exact bytes for any file size)."""
+    import httpx
+
+    config = _github_repo()
+    assert config is not None
+    token, repo, _, _ = config
+    url = f"https://api.github.com/repos/{repo}/git/blobs/{sha}"
+    with httpx.Client(timeout=timeout) as client:
+        response = client.get(url, headers=_github_headers(token))
+        if response.status_code != 200:
+            return response.status_code, response.content
+        try:
+            payload = response.json()
+        except ValueError:
+            return response.status_code, response.content
+        content = payload.get("content") if isinstance(payload, dict) else None
+        if not isinstance(content, str):
+            return 422, b""
+        try:
+            return 200, base64.b64decode(content)
+        except ValueError:
+            return 422, b""
+
+
 def _github_fetch(name: str, timeout: float = 30.0) -> tuple[int, bytes]:
-    """GET a file as raw bytes: (200, content) or (404, b''). Raises on network errors."""
+    """GET a file as exact bytes: (200, content) or (404, b'').
+
+    Reads through the Contents JSON API (base64, decoded client-side) and
+    the Blob API for larger files — never the raw media type, whose rendering
+    proved unreliable for binary content. Raises on network errors.
+    """
     import httpx
 
     config = _github_repo()
     assert config is not None
     token, _, _, _ = config
     url, _ = _github_paths(name)
-    headers = {**_github_headers(token), "Accept": "application/vnd.github.raw"}
     with httpx.Client(timeout=timeout) as client:
-        response = client.get(url, headers=headers)
+        response = client.get(url, headers=_github_headers(token))
         if response.status_code == 404:
             return 404, b""
-        return response.status_code, response.content
+        if response.status_code != 200:
+            return response.status_code, response.content
+        try:
+            payload = response.json()
+        except ValueError:
+            return response.status_code, response.content
+        if not isinstance(payload, dict):
+            return 422, b""
+        inline = payload.get("content") if payload.get("encoding") == "base64" else None
+        if isinstance(inline, str) and not payload.get("truncated"):
+            try:
+                return 200, base64.b64decode(inline)
+            except ValueError:
+                return 422, b""
+        sha = payload.get("sha")
+        if not isinstance(sha, str):
+            return 422, b""
+    return _github_blob(name, sha, timeout)
 
 
 def _github_repo_info(timeout: float = 30.0) -> tuple[int, dict]:
@@ -246,6 +296,24 @@ def _github_branch(timeout: float = 30.0) -> str:
     except Exception:
         pass
     return configured
+
+
+def _github_blob_size(name: str, timeout: float = 30.0) -> int | None:
+    """Server-side size via the Contents JSON API (independent of raw rendering)."""
+    config = _github_repo()
+    assert config is not None
+    import httpx
+
+    url, _ = _github_paths(name)
+    with httpx.Client(timeout=timeout) as client:
+        response = client.get(url, headers=_github_headers(config[0]))
+        if response.status_code != 200:
+            return None
+        try:
+            size = response.json().get("size")
+        except ValueError:
+            return None
+        return size if isinstance(size, int) else None
 
 
 def _github_current_sha(url: str, headers: dict[str, str], timeout: float) -> tuple[int, str | None]:
@@ -613,7 +681,7 @@ def should_restore(remote: dict | None, local: dict | None) -> bool:
 
 def restore_on_startup() -> bool:
     """Download and apply the newest snapshot when it is newer than local."""
-    global _boot_restored_at
+    global _boot_restored_at, _last_fingerprint
     if not snapshot_enabled():
         return False
     try:
@@ -630,11 +698,28 @@ def restore_on_startup() -> bool:
         _boot_restored_at = remote["created_at"]
         global _last_upload_at
         _last_upload_at = time.time()
+        _last_fingerprint = _snapshot_fingerprint()
         print(f"[persist] Restored {len(restored)} files from snapshot ({remote.get('created_at')}).")
         return True
     except Exception as exc:
         print(f"[persist] Snapshot restore failed (continuing local-only): {exc}")
         return False
+
+
+def _snapshot_fingerprint() -> dict[str, tuple[int, int]]:
+    """Map each snapshotted file (project-relative) to (mtime_ns, size)."""
+    fingerprint: dict[str, tuple[int, int]] = {}
+    for path in collect_snapshot_files():
+        try:
+            relative = path.relative_to(project_root()).as_posix()
+        except ValueError:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        fingerprint[relative] = (stat.st_mtime_ns, stat.st_size)
+    return fingerprint
 
 
 def _newest_local_mtime() -> float:
@@ -655,7 +740,7 @@ def upload_now(reason: str = "scheduled", timeout: float = 30.0) -> bool:
     (HTTP 404). Network errors, 403s and newer unseen remote snapshots all
     block the upload instead of risking an overwrite.
     """
-    global _last_upload_at
+    global _last_upload_at, _last_fingerprint
     if not snapshot_enabled():
         return False
     with _uploader_lock:
@@ -672,7 +757,13 @@ def upload_now(reason: str = "scheduled", timeout: float = 30.0) -> bool:
                 if _boot_restored_at != remote_created and marker_created != remote_created:
                     print("[persist] Remote snapshot is newer than local state; refusing to overwrite. Restart to restore it first.")
                     return False
-            if marker and _newest_local_mtime() <= max(_marker_time(marker), _last_upload_at):
+            fingerprint = _snapshot_fingerprint()
+            if _last_fingerprint is not None:
+                if fingerprint == _last_fingerprint:
+                    return False
+            elif marker and _newest_local_mtime() <= _marker_time(marker):
+                # Across reboots there is no fingerprint yet: fall back to
+                # mtimes (tar preserves them, so untouched restores skip).
                 return False
             payload, meta = build_snapshot_bytes()
             if not meta["files"]:
@@ -687,6 +778,7 @@ def upload_now(reason: str = "scheduled", timeout: float = 30.0) -> bool:
                 print(f"[persist] Snapshot metadata upload failed with status {status}.")
                 return False
             _last_upload_at = time.time()
+            _last_fingerprint = _snapshot_fingerprint()
             write_local_marker(meta)
             print(f"[persist] Uploaded snapshot ({reason}): {len(meta['files'])} files, {meta['bytes']} bytes.")
             return True
@@ -765,7 +857,13 @@ def cmd_check() -> int:
         status, content = _remote_fetch(key)
         print(f"GET {key}: HTTP {status}, {len(content)} bytes")
         if status != 200 or content != probe:
-            print("Download mismatch: storage is reachable but roundtrip failed.")
+            print(f"Download mismatch: sent {len(probe)} bytes, got {len(content)} bytes.")
+            print(f"Received preview: {content[:100]!r}")
+            try:
+                server_size = _github_blob_size(key)
+                print(f"Server-side blob size: {server_size}")
+            except Exception as exc:
+                print(f"Could not read server-side metadata: {exc}")
             return 1
         status = _remote_delete(key)
         print(f"DELETE {key}: HTTP {status}")

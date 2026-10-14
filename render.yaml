@@ -22,3 +22,20 @@ services:
         value: https://deep-research-agent.tranminhkhoi8407.workers.dev
       - key: CORS_ORIGINS
         value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+      # Durable snapshots: WITHOUT these, Render Free wipes all accounts,
+      # reports and avatars on every restart. GitHub backend needs no credit
+      # card: create a PRIVATE repo + fine-grained token (Contents read/write
+      # on that repo only), set the vars below in the Render dashboard
+      # (Environment > Add, mark the token as Secret), then redeploy.
+      # See .env.example for details. (R2 works too if you ever add a card;
+      # set R2_ACCOUNT_ID/R2_ACCESS_KEY_ID/R2_SECRET_ACCESS_KEY/R2_BUCKET.)
+      - key: SNAPSHOT_GITHUB_TOKEN
+        sync: false
+      - key: SNAPSHOT_GITHUB_REPO
+        sync: false
+      - key: SNAPSHOT_GITHUB_BRANCH
+        value: main
+      - key: SNAPSHOT_GITHUB_PATH
+        value: snapshots
+      - key: SNAPSHOT_INTERVAL_SECONDS
+        value: "300"

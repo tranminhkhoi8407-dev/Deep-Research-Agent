@@ -626,6 +626,7 @@ export default function App() {
   });
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [bootNotice, setBootNotice] = useState("");
   const [showWelcome, setShowWelcome] = useState(false);
   const [tourRequest, setTourRequest] = useState<TourRequest>(null);
   const [libraryTourReset, setLibraryTourReset] = useState(0);
@@ -746,51 +747,69 @@ export default function App() {
         );
       }
 
-      try {
-        const [providersResponse, meResponse] = await Promise.all([
-          fetch(`${API_BASE}/api/auth/providers`, {
-            credentials: "include",
-            signal: AbortSignal.timeout(8000),
-          }),
-          fetch(`${API_BASE}/api/auth/me`, {
-            credentials: "include",
-            cache: "no-store",
-            signal: AbortSignal.timeout(8000),
-          }),
-        ]);
-        if (!providersResponse.ok || !meResponse.ok)
-          throw new Error("Authentication service unavailable");
-        const providerPayload = (await providersResponse.json()) as {
-          providers?: { password?: boolean; google?: boolean; github?: boolean };
-          dev_login?: boolean;
-        };
-        const mePayload = (await meResponse.json()) as {
-          authenticated?: boolean;
-          user?: AuthUser | null;
-          session?: unknown;
-        };
-        if (cancelled) return;
-        setAuthProviders({
-          password: providerPayload.providers?.password !== false,
-          google: Boolean(providerPayload.providers?.google),
-          github: Boolean(providerPayload.providers?.github),
-          dev_login: Boolean(providerPayload.dev_login),
-        });
-        if (mePayload.authenticated && mePayload.user) {
-          setAuthUser(mePayload.user);
-          setLoginSession(readLoginSession(mePayload.session));
-          setAuthStatus("authenticated");
-          if (callbackSuccess) setShowWelcome(true);
-        } else {
-          setAuthStatus("unauthenticated");
-        }
-      } catch {
-        if (!cancelled) {
-          setAuthStatus("unauthenticated");
-          setAuthError(
-            "Could not reach the sign-in service. Check the backend.",
+      // The hosted API sleeps on the free tier: the first request can take up
+      // to a minute (cold start). Retry with backoff instead of failing fast.
+      const waits = [0, 4000, 10000, 20000];
+      let connected = false;
+      for (let attempt = 0; attempt < waits.length && !cancelled; attempt += 1) {
+        if (attempt > 0) {
+          setBootNotice(
+            "Waking up the research API — this can take up to a minute on the free tier…",
           );
+          await new Promise((resolve) => setTimeout(resolve, waits[attempt]));
+          if (cancelled) return;
         }
+        try {
+          const [providersResponse, meResponse] = await Promise.all([
+            fetch(`${API_BASE}/api/auth/providers`, {
+              credentials: "include",
+              signal: AbortSignal.timeout(10000),
+            }),
+            fetch(`${API_BASE}/api/auth/me`, {
+              credentials: "include",
+              cache: "no-store",
+              signal: AbortSignal.timeout(10000),
+            }),
+          ]);
+          if (!providersResponse.ok || !meResponse.ok)
+            throw new Error("Authentication service unavailable");
+          const providerPayload = (await providersResponse.json()) as {
+            providers?: { password?: boolean; google?: boolean; github?: boolean };
+            dev_login?: boolean;
+          };
+          const mePayload = (await meResponse.json()) as {
+            authenticated?: boolean;
+            user?: AuthUser | null;
+            session?: unknown;
+          };
+          if (cancelled) return;
+          setAuthProviders({
+            password: providerPayload.providers?.password !== false,
+            google: Boolean(providerPayload.providers?.google),
+            github: Boolean(providerPayload.providers?.github),
+            dev_login: Boolean(providerPayload.dev_login),
+          });
+          if (mePayload.authenticated && mePayload.user) {
+            setAuthUser(mePayload.user);
+            setLoginSession(readLoginSession(mePayload.session));
+            setAuthStatus("authenticated");
+            if (callbackSuccess) setShowWelcome(true);
+          } else {
+            setAuthStatus("unauthenticated");
+          }
+          setBootNotice("");
+          connected = true;
+          break;
+        } catch {
+          // Retry until the waits run out; the loop shows the wake-up notice.
+        }
+      }
+      if (!connected && !cancelled) {
+        setBootNotice("");
+        setAuthStatus("unauthenticated");
+        setAuthError(
+          "Could not reach the sign-in service. Check the backend.",
+        );
       }
     };
     void bootstrapAuth();
@@ -1542,6 +1561,7 @@ export default function App() {
         </span>
         <strong>Nexora</strong>
         <LoaderCircle className="spin" size={20} />
+        {bootNotice && <p className="auth-loading-note">{bootNotice}</p>}
       </div>
     );
   }

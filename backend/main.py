@@ -166,11 +166,16 @@ def _admin_user_payload(user: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    # Startup: restore the newest R2 snapshot first so accounts, reports,
+    # avatars and libraries survive restarts on ephemeral filesystems.
+    from backend import persist
+    await asyncio.to_thread(persist.restore_on_startup)
+    persist.start_background_uploader()
     print("Nexora Agent API started")
     try:
         yield
     finally:
+        persist.stop_background_uploader()
         # Wake native question waits before the executor is shut down.
         from backend.opencode_interactive import shutdown_workers
         await asyncio.shield(asyncio.to_thread(shutdown_workers))

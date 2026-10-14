@@ -294,9 +294,10 @@ def test_disabled_mode_is_noop_without_network(monkeypatch):
 class _FakeGitHubClient:
     """Minimal GitHub Contents API emulator for transport-shape tests."""
 
-    def __init__(self, files: dict[str, bytes], calls: list):
+    def __init__(self, files: dict[str, bytes], calls: list, default_branch: str = "main"):
         self.files = files
         self.calls = calls
+        self.default_branch = default_branch
 
     def __enter__(self):
         return self
@@ -313,6 +314,9 @@ class _FakeGitHubClient:
         import base64 as _base64
 
         headers = headers or {}
+        if url.startswith("https://api.github.com/repos/") and "/contents/" not in url:
+            self.calls.append(("GET", "@repo", dict(headers), dict(params or {})))
+            return _FakeResponse(200, json.dumps({"default_branch": self.default_branch}).encode())
         path = self._path(url)
         self.calls.append(("GET", path, dict(headers), dict(params or {})))
         if path not in self.files:
@@ -398,8 +402,30 @@ def test_github_update_sends_sha(github_api):
     put_calls = [call for call in calls if call[0] == "PUT"]
     assert put_calls[0][1] == "snapshots/snapshot.meta.json"
     assert put_calls[0][3]["sha"] == "sha-snapshots/snapshot.meta.json"
+    assert put_calls[0][3]["branch"] == "main"
     status, content = persist._remote_fetch("snapshot.meta.json")
     assert (status, content) == (200, b"new")
+
+
+def test_github_uses_repo_default_branch(monkeypatch):
+    files: dict[str, bytes] = {}
+    calls: list = []
+
+    def factory(*args, **kwargs):
+        return _FakeGitHubClient(files, calls, default_branch="master")
+
+    import httpx
+
+    monkeypatch.setenv("SNAPSHOT_GITHUB_TOKEN", "gh-token")
+    monkeypatch.setenv("SNAPSHOT_GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("SNAPSHOT_GITHUB_BRANCH", "main")
+    for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(httpx, "Client", factory)
+    assert persist._github_branch() == "master"
+    assert persist._remote_store("snapshot.meta.json", b"{}") in (200, 201)
+    put_calls = [call for call in calls if call[0] == "PUT"]
+    assert put_calls[0][3]["branch"] == "master"
 
 
 def test_github_full_snapshot_cycle(fake_root, github_api):

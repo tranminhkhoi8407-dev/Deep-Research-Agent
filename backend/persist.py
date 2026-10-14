@@ -206,22 +206,55 @@ def _github_fetch(name: str, timeout: float = 30.0) -> tuple[int, bytes]:
 
     config = _github_repo()
     assert config is not None
-    token, _, branch, _ = config
+    token, _, _, _ = config
     url, _ = _github_paths(name)
     headers = {**_github_headers(token), "Accept": "application/vnd.github.raw"}
     with httpx.Client(timeout=timeout) as client:
-        response = client.get(url, headers=headers, params={"ref": branch})
+        response = client.get(url, headers=headers)
         if response.status_code == 404:
             return 404, b""
         return response.status_code, response.content
 
 
-def _github_current_sha(url: str, headers: dict[str, str], branch: str, timeout: float) -> tuple[int, str | None]:
-    """Return (status, sha): 200+sha when the file exists, 404+None when absent."""
+def _github_repo_info(timeout: float = 30.0) -> tuple[int, dict]:
+    """GET /repos/{owner}/{repo}: tells bad token (401), hidden repo (404) and the real default branch apart."""
+    config = _github_repo()
+    assert config is not None
+    token, repo, _, _ = config
     import httpx
 
     with httpx.Client(timeout=timeout) as client:
-        response = client.get(url, headers=headers, params={"ref": branch})
+        response = client.get(f"https://api.github.com/repos/{repo}", headers=_github_headers(token))
+        if response.status_code != 200:
+            return response.status_code, {}
+        try:
+            data = response.json()
+        except ValueError:
+            return response.status_code, {}
+        return 200, data if isinstance(data, dict) else {}
+
+
+def _github_branch(timeout: float = 30.0) -> str:
+    """The repo's actual default branch (falls back to the configured one)."""
+    config = _github_repo()
+    assert config is not None
+    _, _, configured, _ = config
+    try:
+        status, info = _github_repo_info(timeout)
+        if status == 200 and isinstance(info.get("default_branch"), str) and info["default_branch"].strip():
+            return info["default_branch"].strip()
+    except Exception:
+        pass
+    return configured
+
+
+def _github_current_sha(url: str, headers: dict[str, str], timeout: float) -> tuple[int, str | None]:
+    """Return (status, sha): 200+sha when the file exists, 404+None when absent."""
+    import httpx
+
+    # No ?ref: read from the default branch, whatever it is named.
+    with httpx.Client(timeout=timeout) as client:
+        response = client.get(url, headers=headers)
         if response.status_code == 404:
             return 404, None
         if response.status_code != 200:
@@ -236,14 +269,15 @@ def _github_current_sha(url: str, headers: dict[str, str], branch: str, timeout:
 def _github_store(name: str, body: bytes, timeout: float = 30.0) -> int:
     config = _github_repo()
     assert config is not None
-    token, _, branch, _ = config
+    token, _, _, _ = config
     import httpx
 
     url, _ = _github_paths(name)
     headers = _github_headers(token)
-    status, sha = _github_current_sha(url, headers, branch, timeout)
+    status, sha = _github_current_sha(url, headers, timeout)
     if status not in (200, 404):
         return status
+    branch = _github_branch(timeout)
     payload: dict[str, object] = {
         "message": f"snapshot {name}",
         "content": base64.b64encode(body).decode("ascii"),
@@ -259,16 +293,17 @@ def _github_store(name: str, body: bytes, timeout: float = 30.0) -> int:
 def _github_delete(name: str, timeout: float = 30.0) -> int:
     config = _github_repo()
     assert config is not None
-    token, _, branch, _ = config
+    token, _, _, _ = config
     import httpx
 
     url, _ = _github_paths(name)
     headers = _github_headers(token)
-    status, sha = _github_current_sha(url, headers, branch, timeout)
+    status, sha = _github_current_sha(url, headers, timeout)
     if status == 404:
         return 404
     if status != 200 or sha is None:
         return status
+    branch = _github_branch(timeout)
     with httpx.Client(timeout=timeout) as client:
         response = client.delete(url, headers=headers, json={"message": f"remove {name}", "sha": sha, "branch": branch})
         return response.status_code
@@ -702,6 +737,23 @@ def cmd_check() -> int:
         print("R2: set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET.")
         return 2
     print(f"Snapshot backend: {kind}")
+    if kind == "github":
+        try:
+            repo_status, repo_info = _github_repo_info()
+        except Exception as exc:
+            print(f"Cannot reach the GitHub API: {exc}")
+            return 1
+        if repo_status == 401:
+            print("GitHub token is invalid or expired. Generate a new token.")
+            return 1
+        if repo_status == 404:
+            print("Repository not found or not visible to this token.")
+            print("Check SNAPSHOT_GITHUB_REPO and grant the token Contents access to that repo.")
+            return 1
+        if repo_status != 200:
+            print(f"GitHub repo check failed with HTTP {repo_status}.")
+            return 1
+        print(f"Repository OK, default branch: {repo_info.get('default_branch')}")
     key = "connectivity-check.bin"
     probe = os.urandom(64)
     try:

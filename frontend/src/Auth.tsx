@@ -295,6 +295,16 @@ export function scorePassword(value: string): { score: 0 | 1 | 2 | 3 | 4; hasLen
   return { score: Math.min(4, score) as 0 | 1 | 2 | 3 | 4, hasLength, hasCase, hasNumber, hasSymbolLong };
 }
 
+function readPasswordResetToken(): string {
+  try {
+    const queryToken = new URLSearchParams(window.location.search).get('reset_token');
+    if (queryToken?.trim()) return queryToken.trim();
+    return new URLSearchParams(window.location.hash.replace(/^#/, '')).get('reset_token')?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
 export function LoginPage({
   providers,
   busy,
@@ -312,7 +322,7 @@ export function LoginPage({
   const anyProvider = providers.google || providers.github;
   const [view, setView] = useState<AuthView>(() => {
     try {
-      const token = new URLSearchParams(window.location.search).get('reset_token');
+      const token = readPasswordResetToken();
       if (token && token.trim()) return 'reset';
     } catch { /* Non-browser or blocked URL access. */ }
     return 'signin';
@@ -330,7 +340,7 @@ export function LoginPage({
   const [touched, setTouched] = useState<{ name: boolean; username: boolean; identifier: boolean; email: boolean; password: boolean; confirm: boolean }>({ name: false, username: false, identifier: false, email: false, password: false, confirm: false });
   const [resetToken, setResetToken] = useState(() => {
     try {
-      return new URLSearchParams(window.location.search).get('reset_token')?.trim() || '';
+      return readPasswordResetToken();
     } catch {
       return '';
     }
@@ -502,6 +512,11 @@ export function LoginPage({
       url.searchParams.delete('reset_token');
       url.searchParams.delete('auth');
       url.searchParams.delete('auth_error');
+      const fragmentParams = new URLSearchParams(url.hash.replace(/^#/, ''));
+      if (fragmentParams.has('reset_token')) {
+        fragmentParams.delete('reset_token');
+        url.hash = fragmentParams.size ? fragmentParams.toString() : '';
+      }
       window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
     } catch { /* URL API unavailable. */ }
   };

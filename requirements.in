@@ -1,0 +1,20 @@
+langgraph>=0.3
+langchain-core>=1.0
+langchain-community>=0.3
+langchain-openai>=1.0
+langchain-google-genai>=2.0
+langchain-groq>=0.1.0
+langchain-tavily>=0.2
+python-dotenv>=1.0
+authlib>=1.3
+httpx>=0.27
+itsdangerous>=2.2
+wikipedia>=1.4.0
+
+# Optional second source when SECOND_SOURCE="arxiv" in agent/nodes.py.
+arxiv>=2.1
+pymupdf>=1.24
+Pillow>=11.0
+
+# Long-term memory compatibility pin.
+trustcall==0.0.39

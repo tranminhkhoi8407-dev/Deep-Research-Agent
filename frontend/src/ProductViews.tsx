@@ -28,13 +28,13 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { ResearchEvidence, type ResearchReportData } from './ResearchEvidence';
+import type { ResearchReportData } from './ResearchEvidence';
 import { LibraryLanding } from './LibraryLanding';
 import type { ScholarlyFieldId } from './ScholarlyCatalog';
 
 const PaperLibrary = lazy(() => import('./PaperLibrary').then((module) => ({ default: module.PaperLibrary })));
+const ResearchEvidence = lazy(() => import('./ResearchEvidence').then((module) => ({ default: module.ResearchEvidence })));
+const ReportMarkdown = lazy(() => import('./ReportMarkdown').then((module) => ({ default: module.ReportMarkdown })));
 
 export type Language = 'vi' | 'en';
 export type ResearchDepth = 'quick' | 'standard' | 'deep';
@@ -474,7 +474,7 @@ export function WorkspaceHub(props: WorkspaceHubProps) {
                     <button className="icon-button danger-button" type="button" onClick={() => props.onDeleteReport(props.selectedReport!)} aria-label={t.reports.delete}><Trash2 size={16} /></button>
                   </div>
                 </div>
-                {props.selectedReport.report_data ? <ResearchEvidence key={props.selectedReport.id} data={props.selectedReport.report_data} apiBase={props.apiBase} reportId={props.selectedReport.id} /> : <article className="report-paper library-paper"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, ...linkProps }) => <a {...linkProps} target="_blank" rel="noreferrer">{children}</a> }}>{props.selectedReport.final_report}</ReactMarkdown></article>}
+                {props.selectedReport.report_data ? <Suspense fallback={<div className="compact-empty">{language === 'vi' ? 'Đang tải bằng chứng…' : 'Loading evidence…'}</div>}><ResearchEvidence key={props.selectedReport.id} data={props.selectedReport.report_data} apiBase={props.apiBase} reportId={props.selectedReport.id} /></Suspense> : <article className="report-paper library-paper"><Suspense fallback={<div className="compact-empty">{language === 'vi' ? 'Đang tải báo cáo…' : 'Loading report…'}</div>}><ReportMarkdown>{props.selectedReport.final_report}</ReportMarkdown></Suspense></article>}
               </>
             ) : <div className="compact-empty large"><BookOpen size={32} /><h3>{t.reports.selectTitle}</h3><p>{t.reports.selectDescription}</p></div>}
           </section>

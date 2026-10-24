@@ -4,7 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { BrandMark } from './BrandMark';
 import { displayName, type Appearance, type AuthUser } from './Auth';
-import type { ResearchOptions } from './ResearchSetup';
+import type { ResearchOptions } from './researchOptions';
 import type { AppView, Language } from './ProductViews';
 import { chatModeLabel, defaultAttachmentLimits, defaultOpenCodeModel, errorLabel, fileSize, isImageFile, isPdfFile, publicPdfSupported, latestReport, runningChat, sidebarWidth, stageLabel, validateChatFiles, type ChatAttachment, type ChatConfig, type ChatDetail, type ChatEngine, type ChatSummary } from './researchChatModel';
 import './ResearchChat.css';

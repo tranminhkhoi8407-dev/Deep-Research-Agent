@@ -1,57 +1,75 @@
 services:
   api:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
+    build:
+      context: .
+      dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      PORT: "8000"
+      # The browser reaches the API through the web container on the same origin.
+      # This also makes OAuth callback URLs work without exposing port 8000.
+      FRONTEND_URL: ${FRONTEND_URL:-http://127.0.0.1:5173}
+      BACKEND_URL: ${FRONTEND_URL:-http://127.0.0.1:5173}
+      CORS_ORIGINS: ${FRONTEND_URL:-http://127.0.0.1:5173}
     volumes:
-      - ./reports:/app/reports
-      - ./agent:/app/agent
-      - ./backend:/app/backend
-    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+      - nexora_data:/app/data
+      - nexora_reports:/app/reports
+    expose:
+      - "8000"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_PRO_MONTHLY_PRICE: ${VITE_PRO_MONTHLY_PRICE:-149000}
+        VITE_TEAM_MONTHLY_PRICE: ${VITE_TEAM_MONTHLY_PRICE:-499000}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
   cli:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     profiles:
       - cli
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
     env_file:
       - .env
     volumes:
-      - ./reports:/app/reports
-      - ./agent:/app/agent
+      - nexora_data:/app/data
+      - nexora_reports:/app/reports
+    init: true
     entrypoint: ["python", "main.py"]
     command: ["--help"]
 
   langgraph-studio:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: studio
     profiles:
       - studio
     ports:
-      - "8123:8123"
-      - "2024:2024"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TAVILY_API_KEY=${TAVILY_API_KEY}
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
-      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-deep-research-agent}
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:2024:2024"
     env_file:
       - .env
     volumes:
-      - ./reports:/app/reports
-      - ./agent:/app/agent
-      - ./backend:/app/backend
+      - nexora_data:/app/data
+      - nexora_reports:/app/reports
+    healthcheck:
+      disable: true
     command: langgraph dev --host 0.0.0.0 --port 8123
+
+volumes:
+  nexora_data:
+  nexora_reports:

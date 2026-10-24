@@ -108,6 +108,8 @@ export function errorLabel(code: string, vi: boolean): string {
     report_unavailable: ['Chưa có báo cáo hoàn chỉnh; mở bản chẩn đoán để xem nguồn và phần còn thiếu.', 'No complete report is available; inspect the saved diagnostics and evidence gaps.'],
     conversation_daily_limit: ['Đã đạt giới hạn tạo cuộc trò chuyện trong ngày.', 'Daily conversation limit reached.'],
     turn_hourly_limit: ['Đã đạt giới hạn lượt chat trong giờ này.', 'Hourly conversation turn limit reached.'],
+    research_generation_failed: ['Model chưa trả lời được (thường do API key, hết quota hoặc backend đang lạnh). Kiểm tra key/quota ở backend rồi gửi lại tin nhắn.', 'The model did not respond (usually an API key, quota or cold-backend issue). Check the backend key/quota, then send the message again.'],
+    empty_response: ['Model trả về nội dung trống. Thử gửi lại tin nhắn ngắn gọn hơn.', 'The model returned an empty response. Try sending a shorter message again.'],
   };
   return errors[code]?.[vi ? 0 : 1] || (vi ? 'Chưa hoàn tất yêu cầu. Nội dung đã lưu được giữ lại; không tự gọi lại model.' : 'Request did not complete. Saved content is retained; no automatic model retry.');
 }

@@ -544,6 +544,11 @@ def run_turn(jid):
         update_job(jid, status=outcome, stage="completed", report_id=report_id, error_code="report_unavailable" if outcome == "failed" else None)
     except Exception as exc:
         code = "cancelled" if cancelled(jid) else exc.code if isinstance(exc, oc.RuntimeErrorSafe) else exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, str) and exc.detail.startswith(('attachment_', 'opencode_')) else "research_generation_failed"
+        if code in ("research_generation_failed", "empty_response"):
+            # Record the real cause in server logs (Render logs on production)
+            # so failures are diagnosable; the message itself is user-safe.
+            detail = str(exc)[:300] if str(exc) else ""
+            print(f"[chat] turn {jid} failed with {code}: {type(exc).__name__}: {detail}")
         update_job(jid, status="cancelled" if code == "cancelled" else "failed", stage="stopped", error_code=code)
     finally:
         if token is not None:

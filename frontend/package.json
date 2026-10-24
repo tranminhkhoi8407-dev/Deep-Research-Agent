@@ -32,7 +32,7 @@
     "@blocknote/core": "^0.55.0",
     "@blocknote/mantine": "^0.55.0",
     "@blocknote/math-block": "^0.55.0",
-    "@blocknote/react": "^0.55.0",
+    "@blocknote/react": "^0.56.0",
     "@codemirror/lang-markdown": "^6.5.2",
     "@codemirror/state": "^6.7.6",
     "@codemirror/view": "^6.43.13",

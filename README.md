@@ -1,12 +1,16 @@
 # Nexora Agent
 
-Trợ lý nghiên cứu đa tác nhân: cho 1 chủ đề, hệ thống tự sinh N "analyst" với
-góc nhìn khác nhau, mỗi analyst chạy song song phỏng vấn 1 "expert" ảo (search
-+ tổng hợp), rồi gộp lại thành 1 báo cáo markdown hoàn chỉnh.
+Trợ lý nghiên cứu xây trên LangGraph, có web app, Research Notebook cộng tác,
+Research Chat và CLI. Pipeline research chính của web app ưu tiên đọc nguồn,
+theo dõi bằng chứng và tạo báo cáo có trích dẫn; CLI/LangGraph Studio vẫn có
+graph analyst-interview đa tác nhân riêng.
 
-Xây trên [research-assistant.ipynb](https://github.com/langchain-ai/langchain-academy)
-(module-4, LangChain Academy) — nhưng đóng gói thành 1 CLI dùng được hàng
-ngày thay vì chạy 1 lần trong notebook.
+Graph analyst/interview trong CLI phát triển từ mẫu
+[research-assistant.ipynb](https://github.com/langchain-ai/langchain-academy)
+(module-4, LangChain Academy). Web app hiện dùng thêm một graph evidence-first
+riêng cho quy trình nghiên cứu, phân tích paper và kiểm tra citation.
+
+Muốn chạy thử? Bắt đầu tại [hướng dẫn clone và chạy local](#getting-started).
 
 ## Dự án nghiên cứu cộng tác
 
@@ -80,127 +84,206 @@ kích thước database. Không sửa/xóa log thủ công vì có thể làm m�
 khôi phục tài liệu. Các mốc phiên bản là bản lưu thủ công, không phải backup
 toàn hệ thống. Khi phục hồi mốc, nội dung hiện tại được lưu một mốc trước đó.
 
-## Cấu trúc project
+<a id="getting-started"></a>
+## Bắt đầu từ đầu: clone và chạy local
 
-```
-deep-research-agent/
-├── agent/
-│   ├── __init__.py
-│   ├── state.py       # TypedDict/Pydantic schemas: Analyst, InterviewState, ResearchGraphState
-│   ├── prompts.py      # Toàn bộ prompt template, tách riêng để dễ tune
-│   ├── nodes.py        # Node functions: create_analysts, search_web, generate_answer...
-│   └── graph.py        # Ráp graph, export `graph` cho langgraph dev / main.py
-├── tests/
-│   └── test_graph.py   # Smoke test: graph compile đúng, không cần API key
-├── backend/             # FastAPI + WebSocket stream tiến trình
-├── frontend/            # Web app React/Vite
-├── reports/            # Output .md sinh ra khi chạy (gitignored)
-├── main.py             # CLI entry point
-├── run-app.ps1         # Chạy backend + web app bằng một lệnh trên Windows
-├── requirements.txt
-├── langgraph.json       # Cho phép mở LangGraph Studio local (`langgraph dev`)
-├── pyproject.toml
-├── .env.example
-└── README.md
-```
+### Yêu cầu
 
-## Cài đặt
+- Git.
+- Python 3.11 trở lên.
+- Node.js bản LTS kèm npm để chạy giao diện web.
+- Một API key cho LLM (Groq, Google Gemini hoặc OpenAI) và một
+  [Tavily API key](https://tavily.com) để tìm kiếm web. Tài khoản/provider có
+  thể tính phí hoặc giới hạn quota riêng; hãy kiểm tra chính sách của họ.
+- Docker Desktop chỉ cần nếu muốn chạy backend bằng Docker.
+
+### 1. Clone repository
+
+Lấy URL HTTPS từ nút **Code** trên trang GitHub của repository đã public, sau
+đó chạy:
 
 ```bash
+git clone <URL-HTTPS-cua-repository>
 cd deep-research-agent
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-
-python -m pip install -r requirements.txt -r backend/requirements.txt
-
-cp .env.example .env
-# Chọn LLM_PROVIDER, điền key LLM tương ứng và TAVILY_API_KEY thật vào .env
 ```
 
-PowerShell trên Windows:
+Thay `<URL-HTTPS-cua-repository>` bằng URL thật của repository. Nếu bạn clone
+vào thư mục có tên khác, dùng tên thư mục đó ở lệnh `cd`.
+
+### 2. Tạo môi trường Python và cài backend
+
+Trên Windows PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt -r backend\requirements.txt
+```
+
+Nếu PowerShell chặn kích hoạt môi trường, chỉ mở quyền cho cửa sổ hiện tại rồi
+chạy lại lệnh activate:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+Trên macOS/Linux:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt -r backend/requirements.txt
+```
+
+`requirements.txt` cài LangGraph, LangChain, các adapter LLM, Tavily, công cụ
+CLI và thư viện xử lý tài liệu. `backend/requirements.txt` cài FastAPI,
+WebSocket, SQLite collaboration support, upload và các thư viện phụ trợ. Cài
+cả hai file để chạy đầy đủ ứng dụng.
+
+### 3. Tạo và điền `.env`
+
+Tại thư mục gốc repository:
+
+```powershell
 Copy-Item .env.example .env
 ```
 
-Cần 2 API key:
-- **Một LLM provider** — đặt `LLM_PROVIDER=groq`, `gemini`, hoặc `openai`,
-  rồi điền key tương ứng. Có thể đổi model bằng `GROQ_MODEL`, `GEMINI_MODEL`,
-  hoặc `OPENAI_MODEL`.
-- **Tavily** — [tavily.com](https://tavily.com), free tier đủ dùng để research
-  hàng ngày.
-
-## Chạy
+Hoặc macOS/Linux:
 
 ```bash
-python main.py "So sánh RAG vs fine-tuning cho chatbot domain-specific tiếng Việt" --max-analysts 2 --depth deep
+cp .env.example .env
 ```
 
-Lệnh trên dừng hai lần để review analyst và section. Muốn chạy thẳng để kiểm
-tra nhanh hoặc dùng trong automation:
+Mở `.env` và điền các giá trị sau:
+
+| Biến | Cần cho | Cách cấu hình |
+|---|---|---|
+| `LLM_PROVIDER` | Research có dùng LLM | Chọn đúng một: `groq`, `gemini` hoặc `openai`. Dùng `auto` nếu muốn tự chọn provider theo API key đang có. |
+| `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | Research có dùng LLM | Chỉ cần điền key cho provider đã chọn. Chọn model được tài khoản/provider của bạn hỗ trợ qua biến `*_MODEL`. |
+| `TAVILY_API_KEY` | Tìm kiếm web | Điền API key Tavily. Khi thiếu biến này, các yêu cầu research cần tìm kiếm web sẽ không lấy được nguồn mới. |
+| `AUTH_SESSION_SECRET` | Ký session đăng nhập | Có thể để mẫu cho lần chạy local đầu tiên; trước khi public server, bắt buộc thay bằng secret ngẫu nhiên mạnh. |
+| `APP_ENV`, `AUTH_DEV_LOGIN`, `AUTH_COOKIE_SECURE` | Đăng nhập local | Giữ mặc định `development`, `true`, `false` để hiện nút tài khoản development trên máy local. Không bật đăng nhập development trên production. |
+| `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` | Kết nối web/API | Giữ URL local `127.0.0.1` khi chạy theo hướng dẫn này. Khi dùng domain khác, cập nhật đúng origin và bật HTTPS. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Đăng nhập Google | Tùy chọn cho local; callback mặc định là `http://127.0.0.1:8000/api/auth/callback/google`. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Đăng nhập GitHub | Tùy chọn cho local; callback mặc định là `http://127.0.0.1:8000/api/auth/callback/github`. |
+| `ADMIN_EMAILS` | Host Console | Email tài khoản được cấp vai trò Host, phân tách bằng dấu phẩy. Để trống nếu không cần Host Console. |
+
+Tùy chọn nâng cao: `LANGSMITH_TRACING=true` cùng `LANGSMITH_API_KEY` bật
+tracing cho graph; OpenCode worker cần cấu hình riêng như
+[hướng dẫn Research Chat/OpenCode](docs/research-chat-opencode.md); snapshot
+GitHub/R2 chỉ cần khi host có filesystem tạm, xem phần comments trong
+`.env.example` và mục vận hành bên dưới. Không cần cấu hình các tính năng này
+để chạy local cơ bản.
+
+Các biến `VITE_PRO_MONTHLY_PRICE` và `VITE_TEAM_MONTHLY_PRICE` chỉ điều khiển
+con số hiển thị; bản self-hosted không tích hợp thu tiền hay tự cấp license.
+Vite đọc biến `VITE_*` từ `frontend/.env`, không phải root `.env`. Không thêm
+API key, OAuth secret hoặc secret server vào bất kỳ biến `VITE_*` nào: frontend
+build sẽ nhúng chúng vào JavaScript công khai. File `.env` đã được Git bỏ qua;
+không commit file này.
+
+### 4. Database và thư mục dữ liệu
+
+Không cần cài PostgreSQL/MySQL và không cần tạo bảng thủ công. Backend tự tạo
+thư mục, file SQLite và schema khi các tính năng tương ứng khởi tạo. Mặc định
+mọi đường dẫn tương đối tính từ thư mục gốc repository:
+
+| Biến | Mặc định | Nội dung |
+|---|---|---|
+| `AUTH_DATABASE_PATH` | `data/deep-research.db` | Tài khoản, profile, audit log, nhóm/dự án, Research Notebook và dữ liệu cộng tác. |
+| `PAPER_DATABASE_PATH` | `data/paper-library.db` | Thư viện paper và collection cá nhân. |
+| `RESEARCH_CHAT_DATABASE_PATH` | `data/research-chat.db` | Hội thoại research, message, job và file đính kèm của Research Chat. |
+| `RESEARCH_DATA_DIR` | `data/research` | `documents.db`, cache nguồn và PDF người dùng đã tải lên. |
+| `AVATAR_DIR` | `data/avatars` | Avatar tải lên. |
+| `REPORTS_DIR` | `reports` | Report Markdown và metadata đi kèm. |
+
+Các thư mục `data/` và `reports/` không được commit. Để sao lưu local, dừng
+backend trước rồi sao chép cả `data/` và `reports/`; dừng server giúp SQLite
+ghi xong journal/WAL trước khi copy. Không xóa file database để “reset” khi
+còn cần dữ liệu. SQLite phù hợp cho một host; không đặt database lên nhiều
+worker hay một filesystem chia sẻ tùy tiện.
+
+### 5. Cài frontend
+
+Tại thư mục gốc repository:
 
 ```bash
-python main.py "RAG là gì?" --max-analysts 1 --depth quick --no-interrupt
+npm --prefix frontend ci
 ```
 
-Report sẽ được ghi vào `reports/<timestamp>-<topic>.md`.
+Không cần tạo `frontend/.env` khi frontend và backend chạy theo các địa chỉ
+mặc định: Vite đã proxy `/api`, `/ws` và `/health` đến backend. Chỉ sao chép
+`frontend/.env.example` thành `frontend/.env` nếu triển khai frontend riêng
+hoặc cần đặt `VITE_API_BASE_URL`; các biến trong file này là cấu hình công
+khai, không phải nơi lưu secret.
 
-Ba mức độ sâu:
+### 6. Khởi động ứng dụng
 
-| Chế độ | Vòng/analyst | Truy vấn web/vòng | Mục đích |
-|---|---:|---:|---|
-| `quick` | 1 | 1 | Kiểm tra nhanh, tiết kiệm quota |
-| `standard` | 1 | 2 | Báo cáo cân bằng giữa chiều sâu và chi phí |
-| `deep` | 2 | 3 | Nhiều góc nhìn, kiểm tra khoảng trống và audit report |
-
-Chi phí tăng theo số analyst và độ sâu. Một phiên `deep` với 2 analyst có
-thể thực hiện khoảng 20-30 lượt LLM và 12 truy vấn Tavily. Con số thực tế có
-thể thấp hơn khi một bước dùng kết quả dự phòng hoặc nguồn bị trùng.
-
-### Chạy API
-
-```bash
-python -m uvicorn backend.main:app --reload --port 8000
-```
-
-Kiểm tra tại `http://localhost:8000/health`, tài liệu API tại
-`http://localhost:8000/docs`.
-
-Hoặc dùng Docker (cần mở Docker Desktop trước):
-
-```bash
-docker compose up --build api
-```
-
-### Chạy web app
-
-Trên Windows, chạy một lệnh tại thư mục project:
+Trên Windows, sau khi cài Python dependencies và Node/npm, có thể chạy cả
+backend và frontend bằng:
 
 ```powershell
 .\run-app.ps1
 ```
 
-Script sẽ tự bật backend, cài thư viện frontend ở lần chạy đầu và mở web tại
-`http://127.0.0.1:5173`. Nhấn `Ctrl+C` tại cửa sổ PowerShell để dừng cả hai.
+Mở `http://127.0.0.1:5173`, chọn **Dùng tài khoản phát triển cục bộ** để vào
+app mà không cần thiết lập OAuth. Nhấn `Ctrl+C` tại cửa sổ PowerShell để dừng.
+Không chạy hai `run-app.ps1` cùng lúc. Script không tự dừng ứng dụng khác chỉ
+vì ứng dụng đó giữ cổng 8000 hoặc 5173.
 
-Nếu muốn chạy từng phần để debug, mở hai cửa sổ terminal:
+Trên macOS/Linux, hoặc khi cần debug, mở hai terminal tại thư mục gốc. Terminal
+thứ nhất chạy API:
 
-```powershell
-# Terminal 1
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --reload --port 8000
-
-# Terminal 2
-npm --prefix frontend install
-npm --prefix frontend run dev
+```bash
+python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Trong web app, nhập bất kỳ chủ đề đủ cụ thể, chọn **Nhanh / Tiêu chuẩn /
-Chuyên sâu**, chọn số analyst rồi bấm **Bắt đầu nghiên cứu**. Bật **Tự động
-duyệt** để chạy thẳng; tắt nó nếu muốn xem và góp ý cho nhóm analyst/các
-section trước khi hệ thống viết report.
+Terminal thứ hai chạy frontend:
+
+```bash
+npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173
+```
+
+Kiểm tra API tại `http://127.0.0.1:8000/health`; tài liệu FastAPI ở
+`http://127.0.0.1:8000/docs`. Luôn chạy lệnh từ thư mục gốc để `.env` và các
+đường dẫn SQLite tương đối được tìm thấy đúng chỗ.
+
+### Chạy riêng CLI
+
+CLI sử dụng graph analyst/interview trong `agent/graph.py`. Chạy tương tác:
+
+```bash
+python main.py "RAG và fine-tuning khác nhau thế nào?" --max-analysts 2 --depth standard
+```
+
+Mặc định CLI dừng để bạn duyệt analyst và section. Chạy một lượt không dừng:
+
+```bash
+python main.py "RAG là gì?" --max-analysts 1 --depth quick --no-interrupt
+```
+
+Report được ghi trong `reports/`. `quick`, `standard` và `deep` đặt các mức
+trần khác nhau cho số vòng, truy vấn, tài liệu và độ dài report; số lần gọi
+LLM/tìm kiếm thực tế phụ thuộc đường đi graph và kết quả đã cache. Với chế độ
+interactive, `--user-id` chọn namespace research profile trong store của tiến
+trình hiện tại.
+
+### Chạy backend bằng Docker (tùy chọn)
+
+Sau khi tạo `.env` và cài Docker Desktop:
+
+```bash
+docker compose up --build api
+```
+
+Lệnh này chạy backend API; frontend vẫn cần chạy bằng Vite như hướng dẫn trên.
+Compose mount `reports/` nhưng không mount mặc định thư mục SQLite `data/` vào
+host. Nếu dùng Docker để giữ dữ liệu qua lần tạo lại container, hãy thêm bind
+mount `./data:/app/data` vào service `api` trong `docker-compose.yml` trước
+khi có dữ liệu thật. Dừng bằng `docker compose down`.
 
 ### Deploy frontend lên Cloudflare Workers
 
@@ -226,17 +309,16 @@ Cloudflare được giới hạn quyền Workers Edit trong biến môi trườn
 hiện tại (`CLOUDFLARE_API_TOKEN`, kèm `CLOUDFLARE_ACCOUNT_ID` nếu cần). Không
 commit token vào repository và không gửi token qua chat.
 
-### Đăng nhập Google / GitHub
+### Đăng nhập và bảo vệ session
 
-Web app có trang đăng nhập riêng. Sau khi đăng nhập, header hiển thị avatar,
-tên tài khoản và menu đăng xuất; nhãn trạng thái backend không còn nằm trên
-header (trạng thái hệ thống vẫn xem được ở **Cài đặt**). API report, REST
-research và WebSocket đều yêu cầu session hợp lệ. Token của Google/GitHub chỉ
-được dùng trong callback để đọc hồ sơ cơ bản, không được lưu vào cookie hay ổ
-đĩa; cookie session được ký và đặt HTTP-only. Thư viện của mỗi tài khoản OAuth
-được lưu trong thư mục riêng theo mã băm của user ID, vì vậy tài khoản này
-không thể đọc report của tài khoản khác. Tài khoản development tiếp tục dùng
-thư mục `reports/` gốc để giữ nguyên lịch sử local hiện có.
+Có thể tạo tài khoản email/mật khẩu, đăng nhập qua Google/GitHub sau khi cấu
+hình OAuth, hoặc dùng nút development trên máy local. Sau khi đăng nhập,
+header hiển thị avatar, tên tài khoản và menu đăng xuất. API report, REST
+research và WebSocket đều yêu cầu session hợp lệ. Mật khẩu nội bộ được băm;
+OAuth access token chỉ dùng trong callback để đọc hồ sơ cơ bản, không được lưu
+vào cookie hoặc ổ đĩa. Session cookie được ký và đặt HTTP-only. Report của
+tài khoản OAuth được lưu trong thư mục riêng theo mã băm user ID; tài khoản
+development dùng thư mục `reports/` gốc.
 
 Để thử giao diện ngay trên máy local, bấm **Dùng tài khoản phát triển cục bộ**.
 Nút này mặc định chỉ có ở `APP_ENV=development`. Khi deploy thật, đặt:
@@ -285,17 +367,18 @@ Sau khi sửa `.env`, dừng ứng dụng bằng `Ctrl+C` và chạy lại `./ru
 Hai nút sẽ tự chuyển từ **Chưa cấu hình** sang trạng thái có thể bấm. Khi dùng
 domain thật, thay hai callback URL bằng `BACKEND_URL` tương ứng và bật HTTPS.
 
-Chế độ **Chuyên sâu** không chỉ yêu cầu model viết dài hơn. Hệ thống sẽ lập
-kế hoạch nghiên cứu, tách câu hỏi chính, tạo nhiều truy vấn tìm kiếm khác
-nhau, loại nguồn trùng, chấm chất lượng và dùng một lượt LLM riêng để loại
-nguồn SEO/lạc đề trước khi trả lời. Sau đó hệ thống chạy hai vòng phỏng vấn
-cho mỗi analyst, chỉ ra thiếu hụt bằng chứng, rồi audit lại toàn bộ report. Citation
-ID và danh mục nguồn cuối cùng được dựng từ URL hệ thống thực sự đã truy xuất,
-không cho model tự bịa nguồn.
+Pipeline research của web app chạy theo hướng evidence-first: phân tích brief,
+tìm và đọc một số nguồn trong giới hạn ngân sách, đánh giá câu hỏi nào còn
+thiếu bằng chứng, tìm/đọc bổ sung khi còn quota, rồi soạn report, tạo visual,
+audit trích dẫn và cho người dùng review trước khi hoàn tất. Citation phải trỏ
+đến đoạn trích có thật trong tài liệu đã đọc; URL tìm thấy hoặc snippet tìm
+kiếm không tự được xem là bằng chứng đã đọc. Chế độ `quick`, `standard`,
+`deep` thay đổi trần thời gian, lượt gọi model, tìm kiếm, tài liệu và dung
+lượng bằng chứng; không bảo đảm số lượt cố định hay chi phí cố định.
 
-Nút **VIE / ENG** trên thanh đầu trang đổi toàn bộ giao diện và đồng thời đặt
-ngôn ngữ đầu ra cho analyst, phần tổng hợp và report cuối cùng. Lựa chọn được
-lưu trên trình duyệt cho lần mở sau.
+Nút **VIE / ENG** trên thanh đầu trang đổi toàn bộ giao diện và đặt ngôn ngữ
+đầu ra cho brief, report và phần tổng hợp. Graph CLI có thể đặt ngôn ngữ
+riêng trong state. Lựa chọn giao diện được lưu trên trình duyệt.
 
 Thanh điều hướng chính có 5 khu vực:
 
@@ -310,9 +393,11 @@ Thanh điều hướng chính có 5 khu vực:
 
 Các mục **Cài đặt**, **Hướng dẫn** và **Bảng giá** vẫn mở được từ Personal Hub
 (avatar) hoặc footer. **Host Console** chỉ hiện trong Personal Hub của tài khoản
-Host, không nằm trên thanh điều hướng. Cài đặt lưu mặc định ngôn ngữ, depth, số
-analyst và auto-approve; Hướng dẫn có 15 bài và tiến độ đọc; Bảng giá trình bày
-license Free/Researcher Pro/Team. Host Console quản lý thành viên, report,
+Host, không nằm trên thanh điều hướng. Cài đặt lưu lựa chọn ngôn ngữ, depth,
+auto-approve và tùy chọn giao diện; Hướng dẫn có 15 bài và tiến độ đọc; Bảng
+giá trình bày license Free/Researcher Pro/Team. Số analyst là tham số của CLI
+graph; graph evidence-first đang dùng cho web quyết định phạm vi qua ngân sách,
+không fan-out theo analyst count. Host Console quản lý thành viên, report,
 nhật ký hoạt động và tình trạng dịch vụ.
 
 ### Personal Hub và hồ sơ nghiên cứu
@@ -381,8 +466,8 @@ trong trình duyệt. Preview công thức dùng KaTeX (bao gồm cú pháp hóa
 Khi chọn một playbook hoặc tạo brief riêng, giao diện chuyển sang **Nghiên cứu**
 và đính kèm có chủ đích các trường `research_domain`, `research_category`,
 `research_notes`, `latex_context` và `source_preferences`. Backend đưa phần này
-vào bước lập kế hoạch và từng analyst nhưng luôn đánh dấu note là bối cảnh chưa
-kiểm chứng. Báo cáo hoàn tất ghi lại domain/category trong Methodology; Thư viện
+vào brief, bước lập kế hoạch và các node evidence/report; note luôn được đánh
+dấu là bối cảnh chưa kiểm chứng. Báo cáo hoàn tất ghi lại domain/category trong Methodology; Thư viện
 có thể lọc và hiển thị metadata đó. Tên nguồn trong workspace là ưu tiên tìm
 kiếm, không phải cam kết rằng mọi API nguồn đã được tích hợp.
 
@@ -527,280 +612,275 @@ Thư viện không phụ thuộc bộ nhớ tạm của backend. Các API `GET /
 tiếp thư mục `reports/`, có kiểm tra đường dẫn để không truy cập ra ngoài thư
 mục. Vì vậy lịch sử vẫn còn sau khi restart server hoặc refresh trình duyệt.
 
-### Chạy qua LangGraph Studio (xem graph trực quan)
+## Kiến trúc kỹ thuật
+
+### Stack
+
+| Lớp | Công nghệ chính | Vai trò |
+|---|---|---|
+| Agent | Python 3.11+, LangGraph, LangChain, Pydantic | State machine, node xử lý, model output có schema và điều phối vòng lặp/nhánh song song. |
+| Model và tìm kiếm | Groq, Google Gemini hoặc OpenAI; Tavily; Wikipedia/arXiv ở graph CLI | Sinh kế hoạch/nội dung và tìm nguồn. Chọn provider/model bằng `.env`; tìm kiếm web cần `TAVILY_API_KEY`. |
+| API | FastAPI, Uvicorn, REST, WebSocket | Đăng nhập, research, streaming tiến trình, tài liệu, notebook, cộng tác và chat. |
+| Dữ liệu | SQLite, file cục bộ, Yjs/pycrdt | Tài khoản, thư viện, hội thoại, tài liệu, report và nội dung notebook. |
+| Web | React 18, TypeScript, Vite, BlockNote, Yjs, KaTeX | Giao diện nghiên cứu, editor khối cộng tác, công thức và report. |
+| Triển khai | Docker; Cloudflare Workers cho frontend tĩnh; Render được mô tả như preview | Worker chỉ phục vụ frontend và proxy API; nó không chạy Python/FastAPI. |
+
+### Bản đồ mã nguồn
+
+```text
+agent/
+  deep_research.py       graph evidence-first được backend web sử dụng
+  graph.py               graph analyst/interview dùng bởi CLI và langgraph.json
+  nodes.py, prompts.py   node/prompt của graph analyst-interview
+  state.py               state TypedDict và Pydantic schemas
+  model_output.py        chuẩn hóa/kiểm tra output LLM và citation
+  documents.py           đọc/cache tài liệu, PDF và trích xuất text
+  research_contract.py   schema brief, report, evidence, visual và ngân sách
+backend/
+  main.py                FastAPI, REST, WebSocket và khởi tạo dịch vụ
+  auth.py, accounts.py   session, password, OAuth, profile và vai trò
+  collaboration.py       nhóm/dự án/notebook và đồng bộ Yjs
+  paper_library.py       paper/collection; research_chat*.py lưu chat/job
+frontend/
+  src/                   React/TypeScript UI và mô hình phía client
+  vite.config.ts         dev server cùng proxy REST/WebSocket đến API
+main.py                  CLI cho graph analyst/interview
+langgraph.json           đăng ký graph analyst/interview cho `langgraph dev`
+run-app.ps1              launcher backend + Vite trên Windows
+docs/                    hướng dẫn tính năng và deployment chi tiết
+tests/                   kiểm tra backend, agent và frontend
+```
+
+### Tài liệu theo chủ đề
+
+- [Evidence-first research, report và LaTeX/PDF](docs/evidence-first-research.md)
+- [Research Chat và cấu hình OpenCode worker](docs/research-chat-opencode.md)
+- [OpenCode Direct thử nghiệm local](docs/research-opencode-direct.md)
+- [Tạo và xuất research visual](docs/research-visual-explorer.md)
+- [Nhóm, dự án, thảo luận và meeting](docs/research-discussions.md)
+- [Research Notebook và project workspace](docs/project-workspaces.md)
+- [Workspace theo lĩnh vực](docs/field-workspaces.md)
+- [Ảnh và URL trong notebook](docs/notebook-media.md)
+- [Friends và thông báo](docs/notifications-and-friends.md)
+- [Triển khai backend preview trên Render](docs/render-deploy.md)
+
+Build frontend từ root repository bằng:
+
+```bash
+npm run build
+```
+
+Script root cài đúng lockfile trong `frontend/`, chạy TypeScript check và Vite
+build; output nằm tại `frontend/dist/`. Đây là build frontend, không đóng gói
+Python backend. Dockerfile cài hai bộ requirements Python và khởi chạy FastAPI.
+
+### Hai LangGraph riêng trong repository
+
+Web app và CLI/Studio hiện không gọi chung một graph. Chúng giải quyết hai
+kiểu research khác nhau; khi sửa luồng cần kiểm tra đúng entry point.
+
+#### 1. Graph evidence-first của web app
+
+`backend/main.py` import `graph` và `batch_graph` từ
+`agent/deep_research.py`. REST research và WebSocket `/ws/research` chạy graph
+này. Trình tự chính:
+
+```text
+understand_brief
+  → collect_evidence
+  → assess_coverage ── còn thiếu bằng chứng và còn ngân sách → collect_evidence
+          └────────── đủ/đã chạm giới hạn ─────────────────→ draft_report
+  → generate_visuals → audit_evidence → improve_report
+  → human_review_section → apply_editorial_feedback → finalize_report
+```
+
+- `understand_brief` chuẩn hóa ngôn ngữ, lĩnh vực, mode và ngân sách; model
+  tạo objective, câu hỏi và truy vấn tìm kiếm. Nếu LLM lỗi, có brief dự phòng
+  để graph không tự bịa kết quả tìm kiếm.
+- `collect_evidence` tìm bằng Tavily, đọc tài liệu qua `DocumentStore`, dùng
+  cache theo chủ sở hữu và chọn đoạn văn bản trong ngân sách. Upload paper/PDF
+  có thể làm nguồn chính. Không coi search snippet là nội dung tài liệu đã đọc.
+- `assess_coverage` đánh giá từng câu hỏi bằng evidence đã trích; nếu còn
+  thiếu, graph có thể đọc thêm đoạn hoặc tìm tiếp đến khi đủ coverage/quota.
+- `draft_report`, `generate_visuals`, `audit_evidence` và `improve_report`
+  tạo report theo schema, kiểm chứng citation/visual và sửa điểm yếu trong
+  giới hạn lượt gọi.
+- `human_review_section` là điểm dừng để người dùng phản hồi; backend tiếp tục
+  graph bằng checkpoint sau khi nhận feedback. `finalize_report` lưu report và
+  metadata nguồn.
+
+Graph này có ngân sách rõ cho LLM calls, search, document reads, token ước
+tính, thời gian và output. Các con số token là ước tính cho quản lý budget,
+không phải hóa đơn provider hay cam kết giá.
+
+#### 2. Graph analyst-interview của CLI và LangGraph Studio
+
+`main.py` import graph từ `agent/graph.py`. Cấu hình `langgraph.json` cũng
+đăng ký `./agent/graph.py:graph`; vì vậy `langgraph dev` mở graph này chứ
+không phải graph web evidence-first.
+
+```text
+load_research_profile → plan_research → create_analysts → human_feedback
+  → Send() cho từng analyst
+      → conduct_interview (subgraph)
+          → hỏi → sinh queries → Tavily + Wikipedia/arXiv song song
+          → lọc/đánh giá evidence → trả lời/lặp → viết section
+  → human_review_section
+  → write_report + write_introduction + write_conclusion song song
+  → finalize_report → audit_report → save_research_profile
+```
+
+Các kỹ thuật LangGraph chính trong graph này:
+
+1. **State có schema:** `agent/state.py` định nghĩa state bằng `TypedDict`,
+   các payload cấu trúc dùng Pydantic. Mỗi node nhận state hiện tại và trả
+   về dictionary chỉ chứa các trường cần cập nhật.
+2. **Edges và routing:** `START`/`END`, `add_edge` và
+   `add_conditional_edges` xác định luồng tuần tự hoặc nhánh/loop. Router
+   quyết định feedback có cần sinh lại analyst hay interview đã đủ vòng.
+3. **Fan-out/map-reduce:** `initiate_all_interviews` trả về `Send()` runtime
+   cho từng analyst; số nhánh được quyết định từ state, không cần biết lúc
+   định nghĩa graph. Kết quả `sections` và `sources` được gộp bằng reducer
+   `Annotated[..., operator.add]`.
+4. **Subgraph:** `interview_builder` là graph đầy đủ cho một interview,
+   compile riêng rồi được gọi bởi node `conduct_interview` trong graph cha.
+5. **Nhánh song song:** search web và nguồn thứ hai cùng chạy sau bước tạo
+   queries; ba phần report/introduction/conclusion cũng được tạo song song,
+   rồi join tại `finalize_report`.
+6. **Human-in-the-loop:** graph interactive compile với
+   `interrupt_before=["human_feedback", "human_review_section"]`. CLI đọc
+   checkpoint, gọi `update_state()` và resume bằng input `None`; web graph có
+   điểm review riêng và backend tiếp tục sau khi người dùng gửi phản hồi.
+
+Một khung tối giản khi thêm node vào LangGraph:
+
+```python
+from typing import Annotated, TypedDict
+import operator
+from langgraph.graph import END, START, StateGraph
+
+class State(TypedDict):
+    topic: str
+    trace: Annotated[list[str], operator.add]
+
+def inspect_topic(state: State) -> dict:
+    return {"trace": [f"đã nhận: {state['topic']}"]}
+
+builder = StateGraph(State)
+builder.add_node("inspect_topic", inspect_topic)
+builder.add_edge(START, "inspect_topic")
+builder.add_edge("inspect_topic", END)
+graph = builder.compile()
+```
+
+Trong project thực tế, cần thêm schema cho state mới, cài node bằng
+`add_node`, nối edge/router, xác định reducer nếu nhiều nhánh ghi cùng một
+field, rồi cập nhật caller tương ứng (CLI, web hoặc Studio). Chỉ khai báo node
+trong file chưa làm node chạy nếu không nối nó vào graph.
+
+### Các vấn đề kỹ thuật đã xử lý
+
+- **Concurrent update khi fan-out:** các `Send()` interview cùng kế thừa state
+  có nhiều field scalar như `topic`. Nếu mỗi nhánh trả toàn bộ state về graph
+  cha, LangGraph báo xung đột concurrent update vì không có reducer cho scalar.
+  `conduct_interview` hiện là adapter: giữ state đầy đủ bên trong subgraph,
+  chỉ trả `sections`/`sources` có reducer về parent graph.
+- **Gộp dữ liệu song song:** state fields được nhiều node ghi cần reducer như
+  `operator.add`; field đơn trị nên có một writer hoặc phải có quy tắc merge
+  tường minh. Nếu thêm nhánh mới, kiểm tra `Annotated` trong `agent/state.py`.
+- **Output LLM không ổn định:** `agent/model_output.py` và các Pydantic
+  contract kiểm tra cấu trúc/quote trước khi đưa vào report. Provider khác nhau
+  có thể trả content blocks hoặc structured output hơi khác, nên adapter LLM
+  được khởi tạo lazy và cần thử với provider/model thực tế.
+- **Citation và nội dung không đáng tin:** report dùng đoạn trích chính xác
+  được đọc từ tài liệu; nội dung web/PDF được coi là dữ liệu, không phải chỉ
+  thị cho agent. Citation được kiểm tra lại trước khi render; kết quả vẫn cần
+  người đọc đánh giá chất lượng và ngữ cảnh nguồn.
+- **Dừng graph để review:** CLI dùng checkpoint để chờ input. Checkpointer và
+  store hiện tại là `MemorySaver`/`InMemoryStore` trong RAM, không phải lưu
+  checkpoint bền vững. Khởi động lại process sẽ mất state đang dở và research
+  profile của graph CLI.
+- **Dev proxy và WebSocket:** khi chạy local, truy cập qua Vite ở port 5173;
+  `frontend/vite.config.ts` chuyển `/api`, `/ws`, `/health` sang port 8000.
+  Nếu đổi proxy/reverse proxy, phải cho phép WebSocket upgrade và gửi cookie
+  credentials đúng origin.
+- **Database và cộng tác:** SQLite + một backend host là cấu hình mục tiêu
+  hiện tại. Dữ liệu Yjs ghi thành log cập nhật append-only, chưa tự compact;
+  theo dõi dung lượng DB và không sửa log bằng tay. Bản version notebook là
+  checkpoint nội dung thủ công, không phải backup đầy đủ của app.
+
+### LangGraph Studio
+
+Sau khi cài requirements và cấu hình `.env`, từ root chạy:
 
 ```bash
 langgraph dev
 ```
 
-Mở link Studio hiện ra trong terminal — bạn sẽ thấy graph chạy real-time,
-node nào đang active, state tại từng bước. Hữu ích để debug interview loop
-hoặc hiểu rõ Send() fan-out ra sao trước khi đọc code.
+Mở URL Studio/API mà CLI in ra. Graph Studio dùng mapping trong
+`langgraph.json` (graph analyst/interview), thích hợp để xem node, state,
+interrupt, loop và `Send()` fan-out. `langgraph dev` chỉ phục vụ graph agent;
+nó không khởi chạy FastAPI, React app hay các API đăng nhập/cộng tác.
 
-## Test
+Trong `agent/nodes.py`, graph interview có thể đổi `SECOND_SOURCE` giữa
+`"wikipedia"` (mặc định) và `"arxiv"`. Gói `arxiv` và `pymupdf` đã được khai
+báo trong `requirements.txt`.
+
+## Kiểm tra và build
+
+Các lệnh sau chạy trong máy developer; một số integration/browser checks có
+thể cần API key, server hoặc trình duyệt riêng:
 
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
+npm --prefix frontend run build
 ```
 
-Test không gọi LLM thật (chỉ kiểm tra graph compile + schema đúng), nên
-chạy được kể cả không có API key thật trong `.env`.
+Python tests nằm trong `tests/`; frontend có các test Node/browser trong
+`frontend/tests/` và script `test:*` trong `frontend/package.json`. Build
+frontend chạy TypeScript check trước khi tạo `frontend/dist/`. Graph compile
+không cần gọi provider, nhưng chạy research thật cần API key/model hợp lệ và
+quota còn dùng được.
 
-## Đổi nguồn search thứ 2 (Wikipedia ↔ arXiv)
+## Vận hành, bảo mật và giới hạn hiện tại
 
-Trong `agent/nodes.py`, đổi biến `SECOND_SOURCE`:
+- **Không phải deployment multi-host:** session registry, một số rate limit,
+  graph checkpoint và `InMemoryStore` nằm trong RAM của process. SQLite lock
+  và Yjs synchronization hiện giả định một backend host; không scale nhiều
+  replica sau load balancer khi chưa chuyển session/checkpoint/database sang
+  dịch vụ dùng chung.
+- **Lưu trữ bền vững:** giữ `data/`, `reports/`, secrets cần thiết và file
+  uploads khi chuyển máy. Render Free có filesystem ephemeral; xem
+  [hướng dẫn Render](docs/render-deploy.md) trước khi dùng. Snapshot GitHub/R2
+  là tùy chọn trong `.env.example`, cần cấu hình credential và kiểm tra backup
+  restore thực tế.
+- **Bảo vệ production:** đặt `APP_ENV=production`,
+  `AUTH_DEV_LOGIN=false`, secret ngẫu nhiên riêng cho `AUTH_SESSION_SECRET`,
+  `AUTH_COOKIE_SECURE=true`, HTTPS/WSS, `FRONTEND_URL`, `BACKEND_URL` và
+  `CORS_ORIGINS` đúng domain. Không public `.env`, OAuth/API keys, token hay
+  database có dữ liệu người dùng. Đặt `ADMIN_EMAILS` tối thiểu cần thiết.
+- **Quên mật khẩu:** luồng đặt lại hiện ghi link chứa token vào log backend;
+  repository chưa nối dịch vụ gửi email. Token chỉ trả về response ở môi
+  trường không production, vì vậy người dùng production chưa nhận được email
+  khôi phục. Trước khi mở đăng ký cộng đồng, cần tích hợp mail provider hoặc
+  quy trình khôi phục an toàn khác; hạn chế quyền truy cập log trong lúc đó.
+- **Tác vụ PDF:** bộ trích xuất làm việc trên text; PDF scan/ảnh không tự được
+  OCR. Bảng, công thức và nhãn hình có thể cần đối chiếu PDF gốc.
+- **Tự host là tự vận hành:** chủ host chịu trách nhiệm chính sách lưu/xóa dữ
+  liệu, sao lưu, điều khoản, thông tin liên hệ, monitoring và việc dùng API
+  provider. Trang giá trong app chỉ là hiển thị, không phải hệ thống thanh
+  toán hay xác nhận license.
 
-```python
-SECOND_SOURCE = "arxiv"      # cho chủ đề kỹ thuật/học thuật (paper, model, thuật toán)
-SECOND_SOURCE = "wikipedia"  # cho chủ đề phổ thông hơn (mặc định)
-```
+## Sự cố thường gặp
 
-Cần `pip install arxiv pymupdf` nếu chưa cài (đã có sẵn trong
-`requirements.txt`).
-
----
-
-## Kiến trúc hiện tại
-
-```
-topic + research_depth + max_analysts
-   → plan_research (mục tiêu, câu hỏi chính, tiêu chí hoàn thành)
-   → create_analysts (LLM sinh N Analyst persona theo research plan)
-   → human_feedback (no-op node — v1 luôn "approve" ngay, xem v2 bên dưới)
-   → initiate_all_interviews (Send × N)
-         → N × conduct_interview
-               → hỏi → sinh bộ query đa dạng
-               → search song song Tavily + Wikipedia/arXiv
-               → khử trùng + chấm nguồn + đánh giá độ đủ bằng chứng
-               → expert trả lời bằng citation ID thật
-               → lặp theo depth → viết evidence memo
-               → mỗi interview trả về 1 "section"
-   → sections (gộp đủ N section nhờ operator.add)
-       ├→ write_report ─┐
-       ├→ write_introduction ─┼→ finalize_report → final_report
-       └→ write_conclusion ─┘
-   → audit_report (deep: skeptical edit; mọi mode: khóa citation/bibliography)
-```
-
-3 kỹ thuật LangGraph lồng nhau trong 1 lần chạy:
-- **Parallelization** (`add_edge(A, [B,C])`) — search_web + search_second_source
-  chạy song song trong mỗi interview.
-- **Sub-graph** — `conduct_interview` là 1 graph hoàn chỉnh (`interview_builder`)
-  được compile rồi dùng làm 1 node trong graph cha.
-- **Map-reduce** (`Send`) — số lượng interview song song = số analyst,
-  không biết trước lúc code, quyết định lúc runtime.
-
----
-
-## Roadmap
-
-### v2 — Human-in-the-loop (module-3)
-
-**Mục tiêu:** dừng graph trước khi chốt danh sách analyst để sửa/thêm góc
-nhìn, và dừng lần 2 trước khi publish để review từng section.
-
-**Việc cần làm trong `agent/graph.py`:**
-
-```python
-from langgraph.checkpoint.memory import MemorySaver
-
-memory = MemorySaver()
-graph = builder.compile(
-    interrupt_before=["human_feedback"],
-    checkpointer=memory,
-)
-```
-
-**Việc cần làm trong `main.py`** (đổi từ `graph.invoke()` 1 lần thành vòng
-lặp resume):
-
-```python
-thread = {"configurable": {"thread_id": "1"}}
-
-# Chạy đến khi gặp interrupt đầu tiên
-for event in graph.stream(initial_state, thread, stream_mode="values"):
-    pass
-
-# In danh sách analyst hiện tại cho user xem
-state = graph.get_state(thread)
-for analyst in state.values["analysts"]:
-    print(analyst.persona)
-
-feedback = input("Feedback (Enter để approve, hoặc gõ góp ý): ")
-graph.update_state(
-    thread,
-    {"human_analyst_feedback": feedback or "approve"},
-    as_node="human_feedback",
-)
-
-# Resume — nếu feedback không rỗng, graph tự quay lại create_analysts
-# (logic này đã có sẵn trong initiate_all_interviews ở agent/nodes.py)
-for event in graph.stream(None, thread, stream_mode="values"):
-    pass
-```
-
-Điểm mấu chốt (xem `langchain-academy/module-3/module-3-giai-thich.md` phần
-2-3 để hiểu sâu hơn): `graph.stream(None, thread, ...)` — truyền `None` nghĩa
-là "tiếp tục từ checkpoint", không phải "chạy lại từ đầu". `as_node="human_feedback"`
-báo cho LangGraph biết update này đến từ đúng node placeholder đó.
-
-**Interrupt lần 2** (review từng section trước khi gộp): thêm 1 node
-`human_review_section` tương tự pattern trên, đặt giữa `conduct_interview`
-và `write_report`.
-
-**Time travel** (không bắt buộc, nhưng hữu ích): nếu muốn so sánh 2 phiên
-bản report khi đổi câu hỏi gốc, dùng `graph.get_state_history(thread)` để
-lấy lại checkpoint cũ rồi fork — xem `module-3/time-travel.ipynb`.
-
-### v3 — Long-term memory (module-5)
-
-**Mục tiêu:** `InMemoryStore` theo `user_id` lưu các topic đã research để
-tránh lặp tìm kiếm cũ; Trustcall duy trì 1 "research profile" (nguồn ưu
-tiên, độ sâu mong muốn) — càng dùng càng cá nhân hoá.
-
-**File mới: `agent/memory.py`:**
-
-```python
-from trustcall import create_extractor
-from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field
-
-model = ChatOpenAI(model="gpt-4o", temperature=0)
-
-class ResearchProfile(BaseModel):
-    """Sở thích research của user, học dần qua các lần dùng."""
-    preferred_sources: list[str] = Field(
-        default_factory=list,
-        description="Nguồn user hay yêu cầu ưu tiên, vd: arxiv, tiếng Việt only",
-    )
-    preferred_depth: str = Field(
-        default="balanced",
-        description="'quick' | 'balanced' | 'deep' — độ sâu report user thường muốn",
-    )
-    past_topics: list[str] = Field(
-        default_factory=list, description="Các topic đã research trước đây"
-    )
-
-profile_extractor = create_extractor(
-    model, tools=[ResearchProfile], tool_choice="ResearchProfile"
-)
-```
-
-**Đổi trong `agent/graph.py`** — compile với cả checkpointer (v2) lẫn store
-(v3) cùng lúc, đúng pattern `module-5/studio/memory_store.py`:
-
-```python
-from langgraph.store.memory import InMemoryStore
-
-store = InMemoryStore()
-graph = builder.compile(
-    interrupt_before=["human_feedback"],
-    checkpointer=memory,
-    store=store,
-)
-```
-
-**Node mới** (đặt trước `create_analysts`, đọc profile để đưa vào system
-prompt) — cần thêm tham số `store: BaseStore` vào chữ ký hàm, LangGraph sẽ
-tự inject:
-
-```python
-from langgraph.store.base import BaseStore
-
-def load_research_profile(state: ResearchGraphState, config, store: BaseStore) -> dict:
-    user_id = config["configurable"]["user_id"]
-    namespace = ("research_profile", user_id)
-    existing = store.search(namespace)
-    profile = existing[0].value if existing else {}
-    # profile giờ có thể format vào ANALYST_INSTRUCTIONS để analyst
-    # được sinh ra có tính đến sở thích nguồn/độ sâu của user
-    return {}  # (tuỳ bạn thiết kế state field để lưu profile này)
-```
-
-Xem `langchain-academy/module-5/module-5-giai-thich.md` mục 3-4 để hiểu
-`enable_inserts=True` (Trustcall vừa update vừa insert entry mới trong 1
-lần gọi) — áp dụng khi muốn `past_topics` tự động lớn dần mà không cần bạn
-tự viết logic "cái nào cũ cái nào mới".
-
-### v4 — Deploy thành sản phẩm thật (module-6)
-
-**Mục tiêu:** bọc `graph.astream()` vào 1 FastAPI endpoint, frontend
-React/TS stream tiến trình real-time — áp lại pattern WebSocket gateway đã
-build ở Code for Glory, show "Analyst kỹ thuật đang tìm kiếm..." live thay
-vì đợi cả report chạy xong.
-
-**Thư mục mới: `backend/` (FastAPI, tách khỏi `agent/` core logic):**
-
-```
-backend/
-├── main.py           # FastAPI app + WebSocket endpoint
-├── schemas.py         # Pydantic request/response models cho API
-└── requirements.txt   # fastapi, uvicorn, websockets
-```
-
-**`backend/main.py` — khung sườn WebSocket streaming:**
-
-```python
-from fastapi import FastAPI, WebSocket
-from agent.graph import graph
-
-app = FastAPI()
-
-@app.websocket("/ws/research")
-async def research_ws(websocket: WebSocket):
-    await websocket.accept()
-    payload = await websocket.receive_json()
-    thread = {"configurable": {"thread_id": payload["session_id"], "user_id": payload["user_id"]}}
-
-    initial_state = {
-        "topic": payload["topic"],
-        "max_analysts": payload.get("max_analysts", 3),
-        "human_analyst_feedback": "approve",
-    }
-
-    # stream_mode="updates" trả về đúng phần THAY ĐỔI sau mỗi node —
-    # đúng cái cần để show "node X vừa chạy xong" live, không cần gửi
-    # nguyên state to mỗi lần (xem module-3-giai-thich.md mục 1)
-    async for chunk in graph.astream(initial_state, thread, stream_mode="updates"):
-        node_name = list(chunk.keys())[0]
-        await websocket.send_json({"event": "node_complete", "node": node_name})
-
-    await websocket.send_json({"event": "done"})
-    await websocket.close()
-```
-
-**Frontend** (`agent/` không đổi, chỉ thêm phần connect WebSocket vào React
-component có sẵn) — pattern giống hệt notification gateway ở Code for Glory:
-1 `useEffect` mở `WebSocket`, `onmessage` cập nhật state hiển thị
-"Analyst {name} đang tìm kiếm..." theo từng `node_complete` event nhận
-được, thay vì chờ 1 response HTTP duy nhất.
-
-**`langgraph.json` cho deployment** (khác file dev hiện tại — theo đúng
-pattern `module-6/deployment/langgraph.json`):
-
-```json
-{
-  "dockerfile_lines": [],
-  "graphs": {
-    "deep_research_agent": "./agent/graph.py:graph"
-  },
-  "python_version": "3.11",
-  "dependencies": ["."]
-}
-```
-
-(Bỏ `"env": "./.env"` khi deploy thật — dùng biến môi trường của platform
-deploy thay vì file `.env` local.)
-
----
-
-## Lưu ý
-
-- `langchain_community.document_loaders` (dùng cho `ArxivLoader`,
-  `WikipediaLoader`) đang trong lộ trình deprecate dài hạn của LangChain
-  (chưa có standalone package thay thế ổn định cho cả 2 loader này tại thời
-  điểm viết README) — vẫn hoạt động bình thường, chỉ là 1 deprecation
-  warning khi import, không phải lỗi.
-- Model mặc định `gpt-4o` khá tốn token khi `max_analysts` lớn (mỗi analyst
-  = 1 interview với nhiều lượt LLM call). Cân nhắc `gpt-4o-mini` khi test
-  nhanh, đổi lại `gpt-4o` cho report thật muốn chất lượng cao.
+| Triệu chứng | Cách xử lý |
+|---|---|
+| `No API key found for LLM_PROVIDER` | Kiểm tra tên `LLM_PROVIDER`, key đúng provider và `.env` ở root; dừng rồi chạy lại backend sau khi sửa. |
+| `Search not configured` hoặc research không có nguồn mới | Điền `TAVILY_API_KEY`. Kiểm tra quyền/quota Tavily và truy cập Internet của backend. |
+| `ModuleNotFoundError` khi chạy Python | Kích hoạt `.venv`, rồi cài lại cả `requirements.txt` và `backend/requirements.txt` bằng đúng Python trong môi trường đó. |
+| npm báo thiếu package hoặc lỗi Vite | Cài Node.js/npm, chạy `npm --prefix frontend ci` từ root. |
+| Cổng 8000/5173 đang được dùng | Dừng instance Nexora cũ. `run-app.ps1 -CheckOnly` chỉ kiểm tra launcher trên Windows; nếu cổng thuộc app khác, đổi cổng/proxy đồng thời thay vì kill tiến trình không rõ chủ sở hữu. |
+| Trang mở nhưng API báo lỗi / WebSocket không kết nối | Dùng `http://127.0.0.1:5173`, kiểm tra backend `/health`, và giữ nguyên proxy trong `frontend/vite.config.ts`; reverse proxy phải hỗ trợ WebSocket. |
+| OAuth quay lại lỗi redirect/CORS/cookie | Callback URL phải khớp tuyệt đối với provider; kiểm tra `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` và HTTPS/cookie flags theo môi trường. Local có thể dùng tài khoản development thay OAuth. |
+| Dữ liệu biến mất sau khi thay container/redeploy | Xác nhận DB và reports nằm trên persistent disk/bind mount; Render Free không đảm bảo filesystem bền vững. Khôi phục từ bản backup đã kiểm tra. |
+| LangGraph Studio không hiện web graph | `langgraph.json` hiện đăng ký `agent/graph.py:graph`; API/web app dùng `agent/deep_research.py`. Chạy backend + Vite để xem sản phẩm web. |

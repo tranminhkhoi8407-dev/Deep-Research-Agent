@@ -7,12 +7,14 @@ normalized user profile.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.starlette_client import OAuth
@@ -23,9 +25,12 @@ from pydantic import BaseModel, Field, StrictBool
 from backend.accounts import (
     authenticate_password_account,
     avatar_file_path,
+    check_auth_rate_limits,
+    clear_auth_rate_limit,
     clear_custom_avatar,
     consume_password_reset_token,
     create_password_reset_token,
+    discard_password_reset_token,
     get_user,
     log_admin_action,
     register_password_account,
@@ -39,39 +44,89 @@ from backend.accounts import (
 )
 from backend.schemas import ProfileUpdateRequest
 from backend.identity import validate_public_name
+from backend.mailer import password_reset_email_configured, send_password_reset_email
 from backend.sessions import REMEMBERED_SECONDS, SESSION_ONLY_SECONDS
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+logger = logging.getLogger(__name__)
 
-# Lightweight in-memory brute-force guard for email/password endpoints.
-# Production with multiple workers should move this to Redis.
-_CREDENTIAL_ATTEMPTS: dict[str, list[float]] = {}
+# Credential limits are stored in the account SQLite database. This shares
+# buckets between API workers on one host; public multi-host deployments still
+# need an edge rate limit or a shared rate-limit service.
 _CREDENTIAL_RATE_LIMIT = 20
+_CREDENTIAL_IP_RATE_LIMIT = 120
 _CREDENTIAL_RATE_WINDOW = 600.0
 
 
-def _credential_client_key(request: Request, email: str) -> str:
-    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    client = forwarded or (request.client.host if request.client else "unknown")
-    return f"{client}|{(email or '').strip().lower()}"
+def _credential_client_key(request: Request) -> str:
+    # Never parse raw X-Forwarded-For here. Use the ASGI client's address;
+    # trusted proxy middleware may set it only for configured proxy peers.
+    # Keep only a keyed digest of this value in SQLite.
+    client = request.client.host if request.client else "unknown"
+    return f"source:{client}"
+
+
+def _credential_identity_key(identity: str) -> str:
+    return f"identity:{(identity or '').strip().lower()}"
+
+
+def _credential_rate_setting(name: str, default: int, maximum: int) -> int:
+    try:
+        return max(1, min(int(os.getenv(name, str(default))), maximum))
+    except (TypeError, ValueError):
+        return default
 
 
 def _check_credential_rate_limit(request: Request, email: str) -> None:
-    now = time.time()
-    key = _credential_client_key(request, email)
-    attempts = [stamp for stamp in _CREDENTIAL_ATTEMPTS.get(key, []) if now - stamp < _CREDENTIAL_RATE_WINDOW]
-    if len(attempts) >= _CREDENTIAL_RATE_LIMIT:
+    identity_key = _credential_identity_key(email)
+    try:
+        allowed = check_auth_rate_limits(
+            [
+                (
+                    _credential_client_key(request),
+                    _credential_rate_setting(
+                        "AUTH_CREDENTIAL_IP_RATE_LIMIT",
+                        _CREDENTIAL_IP_RATE_LIMIT,
+                        10000,
+                    ),
+                ),
+                (
+                    identity_key,
+                    _credential_rate_setting(
+                        "AUTH_CREDENTIAL_RATE_LIMIT",
+                        _CREDENTIAL_RATE_LIMIT,
+                        10000,
+                    ),
+                ),
+            ],
+            _credential_rate_setting(
+                "AUTH_CREDENTIAL_RATE_WINDOW_SECONDS",
+                int(_CREDENTIAL_RATE_WINDOW),
+                86400,
+            ),
+        )
+    except (OSError, sqlite3.Error):
+        logger.exception("Authentication rate-limit storage is unavailable")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is temporarily unavailable",
+        ) from None
+    if not allowed:
         raise HTTPException(
             status_code=429,
             detail="Too many attempts. Please wait a few minutes and try again",
         )
-    attempts.append(now)
-    _CREDENTIAL_ATTEMPTS[key] = attempts
 
 
-def _clear_credential_rate_limit(request: Request, email: str) -> None:
-    _CREDENTIAL_ATTEMPTS.pop(_credential_client_key(request, email), None)
+def _clear_credential_rate_limit(email: str) -> None:
+    # Do not reset the shared source bucket after one successful account login.
+    try:
+        clear_auth_rate_limit(_credential_identity_key(email))
+    except (OSError, sqlite3.Error):
+        # A cleanup failure must not turn an already authenticated login into
+        # a server error; the remaining bucket expires in the normal window.
+        logger.exception("Could not clear the successful authentication bucket")
 
 
 _AVATAR_ATTEMPTS: dict[str, list[float]] = {}
@@ -368,7 +423,7 @@ async def register_with_password(payload: CredentialRegisterRequest, request: Re
         raise HTTPException(status_code=403, detail="This account has been suspended")
     profile = _session_profile(user)
     _start_login_session(request, profile)
-    _clear_credential_rate_limit(request, payload.email)
+    _clear_credential_rate_limit(payload.email)
     log_admin_action(profile["id"], "auth.register", "session", detail={"provider": "password"})
     return {"authenticated": True, "user": profile, "session": _session_info(request)}
 
@@ -390,7 +445,7 @@ async def login_with_password(payload: CredentialLoginRequest, request: Request)
         raise HTTPException(status_code=403, detail="This account has been suspended")
     profile = _session_profile(user)
     _start_login_session(request, profile)
-    _clear_credential_rate_limit(request, identifier)
+    _clear_credential_rate_limit(identifier)
     log_admin_action(profile["id"], "auth.login", "session", detail={"provider": "password"})
     return {"authenticated": True, "user": profile, "session": _session_info(request)}
 
@@ -399,11 +454,35 @@ async def login_with_password(payload: CredentialLoginRequest, request: Request)
 async def forgot_password(payload: ForgotPasswordRequest, request: Request):
     # Always respond generically so callers cannot probe which emails exist.
     _check_credential_rate_limit(request, f"forgot:{payload.email}")
+    is_production = os.getenv("APP_ENV", "development").lower() == "production"
+    email_configured = password_reset_email_configured()
+    if is_production and not email_configured:
+        # This server-wide response is identical for every address and avoids
+        # suggesting that a reset email was sent when delivery is unavailable.
+        raise HTTPException(
+            status_code=503,
+            detail="Password reset email is not configured on this server",
+        )
+
     token = create_password_reset_token(payload.email)
     if token is not None:
-        reset_url = f"{_frontend_url()}/?reset_token={token}"
-        print(f"[auth] Password reset link (valid 60 minutes): {reset_url}")
+        # Store the secret in the URL fragment so it is not sent in the HTTP
+        # request or ordinary proxy access logs.
+        reset_url = f"{_frontend_url()}/#reset_token={quote(token, safe='')}"
         log_admin_action("anonymous", "auth.password_reset_requested", "session")
+        if email_configured:
+            try:
+                await asyncio.to_thread(send_password_reset_email, payload.email, reset_url)
+            except Exception:
+                discard_password_reset_token(token)
+                # Never include recipient, SMTP response, or reset URL in logs.
+                logger.error("Password reset email delivery failed; token invalidated")
+                if not is_production:
+                    logger.info("Development-only reset link: %s", reset_url)
+        elif not is_production:
+            # Local-only fallback for developers without an SMTP service.
+            logger.info("Development-only reset link: %s", reset_url)
+
     return {
         "message": "If an account uses this email, a password reset link has been sent.",
         # Exposed only outside production so local developers can complete the

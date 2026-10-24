@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 import uuid
 import warnings
 from datetime import datetime, timezone
@@ -233,9 +234,19 @@ def _connect() -> sqlite3.Connection:
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS auth_rate_limit_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_hash TEXT NOT NULL,
+            attempted_at REAL NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at DESC);
         CREATE INDEX IF NOT EXISTS idx_audit_created_at ON admin_audit_log(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_local_credentials_email ON local_credentials(email);
+        CREATE INDEX IF NOT EXISTS idx_auth_rate_limit_key_time
+            ON auth_rate_limit_attempts(key_hash, attempted_at);
+        CREATE INDEX IF NOT EXISTS idx_auth_rate_limit_time
+            ON auth_rate_limit_attempts(attempted_at);
         """
     )
     # Lightweight forward migration for databases created before licenses existed.
@@ -267,6 +278,66 @@ def _connect() -> sqlite3.Connection:
             connection.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_name_key ON users(public_name_key)")
     return connection
+
+
+def check_auth_rate_limits(key_limits: list[tuple[str, int]], window_seconds: float) -> bool:
+    """Atomically count auth attempts in SQLite across workers on this host.
+
+    Keys are HMACed with the session secret before storage so raw IP addresses
+    and account identifiers are not written to the rate-limit table.
+    """
+    secret = (os.getenv("AUTH_SESSION_SECRET") or "deep-research-local-development-only-secret").encode("utf-8")
+    keyed_limits = {
+        hmac.new(secret, key.encode("utf-8"), hashlib.sha256).hexdigest(): max(1, int(limit))
+        for key, limit in key_limits
+        if key
+    }
+    if not keyed_limits:
+        return True
+
+    now = time.time()
+    cutoff = now - max(1.0, float(window_seconds))
+    placeholders = ", ".join("?" for _ in keyed_limits)
+    with _connect() as connection:
+        # Serialize check-and-insert so two workers cannot both pass the same
+        # threshold concurrently.
+        # `_connect` may have just applied a forward schema migration.
+        connection.commit()
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "DELETE FROM auth_rate_limit_attempts WHERE attempted_at <= ?",
+            (cutoff,),
+        )
+        rows = connection.execute(
+            f"""SELECT key_hash, COUNT(*) AS attempt_count
+                FROM auth_rate_limit_attempts
+                WHERE key_hash IN ({placeholders}) AND attempted_at > ?
+                GROUP BY key_hash""",
+            (*keyed_limits.keys(), cutoff),
+        ).fetchall()
+        counts = {str(row["key_hash"]): int(row["attempt_count"]) for row in rows}
+        if any(counts.get(key, 0) >= limit for key, limit in keyed_limits.items()):
+            # Keep the expired-row cleanup even when this request is blocked.
+            connection.commit()
+            return False
+        connection.executemany(
+            "INSERT INTO auth_rate_limit_attempts (key_hash, attempted_at) VALUES (?, ?)",
+            ((key, now) for key in keyed_limits),
+        )
+    return True
+
+
+def clear_auth_rate_limit(key: str) -> None:
+    """Clear one identity bucket after a successful password login."""
+    if not key:
+        return
+    secret = (os.getenv("AUTH_SESSION_SECRET") or "deep-research-local-development-only-secret").encode("utf-8")
+    key_hash = hmac.new(secret, key.encode("utf-8"), hashlib.sha256).hexdigest()
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM auth_rate_limit_attempts WHERE key_hash = ?",
+            (key_hash,),
+        )
 
 
 def _admin_emails() -> set[str]:
@@ -501,6 +572,18 @@ def create_password_reset_token(email: str) -> str | None:
             (_hash_reset_token(token), user_id, expires, now),
         )
     return token
+
+
+def discard_password_reset_token(token: str) -> None:
+    """Invalidate a reset token that could not be delivered to its recipient."""
+    candidate = (token or "").strip()
+    if not candidate:
+        return
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM password_resets WHERE token_hash = ?",
+            (_hash_reset_token(candidate),),
+        )
 
 
 def consume_password_reset_token(token: str, new_password: str) -> dict[str, Any]:

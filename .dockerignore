@@ -10,6 +10,10 @@ env/
 *.egg-info/
 dist/
 build/
+node_modules/
+**/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
 
 # IDE
 .vscode/
@@ -24,7 +28,13 @@ build/
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
 .env.*.local
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+.dev.vars*
 
 # Reports (generated at runtime)
 reports/

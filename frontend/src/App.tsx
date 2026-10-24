@@ -30,14 +30,10 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { ResearchSetup, defaultResearchOptions, initialResearchOptions, type ResearchOptions } from "./ResearchSetup";
+import { defaultResearchOptions, initialResearchOptions, type ResearchOptions } from "./researchOptions";
 import { downloadReportArtifact, fetchReportArtifact } from "./reportExports";
 import { hasResearchInput, researchOutcome } from "./researchForm";
-import { ResearchEvidence, type ResearchReportData } from "./ResearchEvidence";
-import { ResearchChat } from './ResearchChat';
-import { ResearchReportsWorkspace } from './ResearchReportsWorkspace';
+import type { ResearchReportData } from "./ResearchEvidence";
 import { researchHash, researchScreenFromHash, type ResearchScreen } from './researchNavigation';
 import {
   ProductNavigation,
@@ -58,7 +54,6 @@ import {
   type AuthProviders,
   type AuthUser,
 } from "./Auth";
-import { AdminConsole } from "./AdminConsole";
 import { AppFooter } from "./AppFooter";
 import { BrandMark } from "./BrandMark";
 import type { TourRequest } from "./GuidedTour";
@@ -88,6 +83,24 @@ const UserProfile = lazy(() =>
 );
 const CollaborationHub = lazy(() =>
   import("./CollaborationHub").then((module) => ({ default: module.CollaborationHub })),
+);
+const ResearchSetup = lazy(() =>
+  import("./ResearchSetup").then((module) => ({ default: module.ResearchSetup })),
+);
+const ResearchEvidence = lazy(() =>
+  import("./ResearchEvidence").then((module) => ({ default: module.ResearchEvidence })),
+);
+const ResearchChat = lazy(() =>
+  import("./ResearchChat").then((module) => ({ default: module.ResearchChat })),
+);
+const ResearchReportsWorkspace = lazy(() =>
+  import("./ResearchReportsWorkspace").then((module) => ({ default: module.ResearchReportsWorkspace })),
+);
+const AdminConsole = lazy(() =>
+  import("./AdminConsole").then((module) => ({ default: module.AdminConsole })),
+);
+const ReportMarkdown = lazy(() =>
+  import("./ReportMarkdown").then((module) => ({ default: module.ReportMarkdown })),
 );
 
 function routedViewFromHash(
@@ -1781,6 +1794,7 @@ export default function App() {
         </main>
       ) : activeView === "research" ? (
         <>
+        <Suspense fallback={<div className="domain-loading" role="status"><LoaderCircle className="spin" size={24} />{language === 'vi' ? 'Đang tải không gian nghiên cứu…' : 'Loading research workspace…'}</div>}>
         <div className="research-chat-screen" hidden={researchInterface !== 'chat'}>
           <ResearchChat key={authUser.id} visible={researchInterface === 'chat'} reportRunning={isBusy} userId={authUser.id} user={authUser} apiBase={API_BASE} language={language} onClassic={openResearchReports} onReportsChanged={() => void loadReports()} onNavigate={navigateTo} appearance={appearance} onAppearanceChange={setAppearance} onLanguageChange={setLanguage} onLogout={() => void logout()} />
         </div>
@@ -2275,18 +2289,7 @@ export default function App() {
                     </div>
                   </div>
                   {reportData ? <ResearchEvidence data={reportData} apiBase={API_BASE} reportId={serverPath.split(/[\\/]/).pop() || undefined} /> : <article className="report-paper">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        a: ({ children, ...props }) => (
-                          <a {...props} target="_blank" rel="noreferrer">
-                            {children}
-                          </a>
-                        ),
-                      }}
-                    >
-                      {finalReport}
-                    </ReactMarkdown>
+                    <ReportMarkdown>{finalReport}</ReportMarkdown>
                   </article>}
                 </div>
               )}
@@ -2319,6 +2322,7 @@ export default function App() {
           </section>
         </main>
         </ResearchReportsWorkspace>}
+        </Suspense>
         </>
       ) : activeView === "domains" ? (
         <main className="product-page fields-page-shell" key="domains">
@@ -2356,15 +2360,17 @@ export default function App() {
         </main>
       ) : activeView === "admin" && authUser.role === "admin" ? (
         <main className="product-page admin-page view-enter" key="admin">
-          <AdminConsole
-            apiBase={API_BASE}
-            language={language}
-            currentUser={authUser}
-            onNotify={(message) => {
-              setNotice(message);
-              window.setTimeout(() => setNotice(""), 2600);
-            }}
-          />
+          <Suspense fallback={<div className="domain-loading" role="status"><LoaderCircle className="spin" size={24} />{language === 'vi' ? 'Đang tải quản trị…' : 'Loading admin console…'}</div>}>
+            <AdminConsole
+              apiBase={API_BASE}
+              language={language}
+              currentUser={authUser}
+              onNotify={(message) => {
+                setNotice(message);
+                window.setTimeout(() => setNotice(""), 2600);
+              }}
+            />
+          </Suspense>
         </main>
       ) : (
         <main className="product-page view-enter" key={activeView}>

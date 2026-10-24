@@ -1,0 +1,3 @@
+# Copy this file to .dev.vars for local `wrangler dev` and set your own HTTPS API.
+# Never point a community fork at another project's backend.
+BACKEND_ORIGIN=https://your-api.example.com

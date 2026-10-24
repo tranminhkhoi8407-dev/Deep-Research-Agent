@@ -2,7 +2,7 @@
 # service for real accounts, notebooks, collaboration projects, or reports.
 services:
   - type: web
-    name: nexora-api-preview
+    name: deep-research-agent-api
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
@@ -17,11 +17,11 @@ services:
       - key: AUTH_SESSION_SECRET
         generateValue: true
       - key: FRONTEND_URL
-        value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+        sync: false
       - key: BACKEND_URL
-        value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+        sync: false
       - key: CORS_ORIGINS
-        value: https://deep-research-agent.tranminhkhoi8407.workers.dev
+        sync: false
       # Durable snapshots: WITHOUT these, Render Free wipes all accounts,
       # reports and avatars on every restart. GitHub backend needs no credit
       # card: create a PRIVATE repo + fine-grained token (Contents read/write

@@ -1,48 +1,75 @@
-# Render backend preview (free)
+# Render preview deployment
 
-This is a **temporary test deployment**, not a durable home for user data.
-Render Free can sleep and restart; its local filesystem is ephemeral. This app
-currently stores accounts, notebooks, paper collections, and collaboration
-state in SQLite, and reports in local files. Those records can disappear after
-a restart or redeploy. The public frontend is connected only to verify API
-reachability; do not invite real users or store real data until durable storage
-and backups are in place.
+`render.yaml` is a **preview template**, not a production-ready hosting plan.
+The application stores accounts, notebooks, paper collections, collaboration
+state and reports on disk. Before inviting real users, configure durable
+storage, tested backups, email delivery and monitoring. Confirm the current
+limits of your Render plan before relying on it for persistent user data.
 
-## Create the backend
+This guide intentionally contains no maintainer-owned API or Worker URL. A
+fork must use a backend and frontend domain controlled by its operator.
 
-1. Push a branch containing `Dockerfile` and `render.yaml` to the private GitHub
-   repository. In Render, connect GitHub and grant access to that repository.
-2. In the existing **Deep Research Agent** project, choose **Create new
-   service → Web Service**, select the repository and the pushed branch.
-3. Select **Docker** runtime, **Free** instance, repository root as root
-   directory, `./Dockerfile` as Dockerfile path, and `/health` as health path.
-   The Dockerfile starts Uvicorn on Render's `$PORT` automatically. Do not set
-   a build command or start command in the dashboard.
-4. Add the non-secret variables from `render.yaml`. Generate a new long random
-   value for `AUTH_SESSION_SECRET` in the Render dashboard. Never commit it.
-   If creating from the Blueprint instead, Render generates it automatically.
-5. Deploy and wait for **Live**. Open `https://nexora-api-preview.onrender.com/health`;
-   it should return `{"status":"ok","service":"deep-research-agent"}`.
+## Create your own backend
 
-The Blueprint file is provided for repeatable configuration. Manual Web
-Service creation in the existing Render project does **not** import its
-variables automatically; enter them in the service's Environment page.
+1. Fork or clone this repository into your own GitHub account.
+2. In Render, create a new Blueprint from your repository and select
+   `render.yaml`, or create a Docker Web Service using the repository root,
+   `Dockerfile` and `/health` health path. The Docker image listens on Render's
+   `$PORT`; do not add a separate start command.
+3. Set `FRONTEND_URL`, `BACKEND_URL` and `CORS_ORIGINS` in the service settings.
+   For a Cloudflare Worker proxy, use the Worker origin for all three values.
+   For a separate frontend and API, set the frontend origin in
+   `FRONTEND_URL`/`CORS_ORIGINS` and the public API origin in `BACKEND_URL`.
+4. Confirm `APP_ENV=production`, `AUTH_DEV_LOGIN=false`,
+   `AUTH_COOKIE_SECURE=true`, and a unique generated `AUTH_SESSION_SECRET`.
+   Never reuse the sample local secret or commit credentials.
+5. Add one supported LLM provider key, `TAVILY_API_KEY`, and the SMTP variables
+   from `.env.example` if password reset by email is enabled.
+6. Deploy and check `https://<your-render-service-domain>/health` for a JSON
+   response with status `ok`.
 
-## Connect sign-in and research later
+`render.yaml` marks user-specific origins and snapshot credentials as
+`sync: false`; enter values in your own service's Environment settings. The
+generated `deep-research-agent-api` service name is only a starting point. Use
+the actual public URL Render assigns to your service; do not copy an origin
+from this repository's previous preview deployment.
 
-- Add either `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` or the GitHub
-  equivalents in Render Environment. Register the matching callback at
-  `https://deep-research-agent.tranminhkhoi8407.workers.dev/api/auth/callback/google`
-  or `/github` **only after** the Cloudflare Worker proxy is deployed.
-- Add `GEMINI_API_KEY` (or another supported model provider) and
-  `TAVILY_API_KEY` for research. Never put secret values in `VITE_*` variables,
-  Git, or the frontend.
-- The Cloudflare Worker is configured with
-  `BACKEND_ORIGIN=https://nexora-api-preview.onrender.com`. It forwards
-  same-origin `/api`, `/ws`, and `/health` to Render. Verify
-  `https://deep-research-agent.tranminhkhoi8407.workers.dev/health` returns OK.
-- Before production use, migrate SQLite and report storage to a persistent
-  service or a Render paid persistent disk, add backups, and test OAuth and
-  WebSocket through the Worker domain. Do not rely on Render Free's filesystem.
+## Connect a Cloudflare Worker
 
-Render Free can also take time to wake on the first request after inactivity.
+The Worker serves the compiled frontend and proxies `/api/*`, `/ws/*` and
+`/health` to the URL in `BACKEND_ORIGIN`. `wrangler.jsonc` intentionally omits
+that value so a fork cannot silently send its users' requests to the
+maintainer's preview backend.
+
+1. Deploy the frontend with `npm run deploy` after Wrangler is authenticated.
+   Until `BACKEND_ORIGIN` is configured, API calls safely return `503`.
+2. In Cloudflare Worker settings, add the non-secret variable
+   `BACKEND_ORIGIN=https://<your-render-service-domain>`. Alternatively run
+   `npx wrangler secret put BACKEND_ORIGIN` and enter your own HTTPS backend
+   origin. A Worker secret is also fine for this URL, although it is not an API
+   credential.
+3. Set the backend's `FRONTEND_URL`, `BACKEND_URL` and `CORS_ORIGINS` to the
+   Worker origin, then verify `https://<your-worker-domain>/health`.
+4. Register Google/GitHub OAuth callbacks on that Worker origin:
+   `/api/auth/callback/google` and `/api/auth/callback/github`.
+
+For `wrangler dev`, copy `.dev.vars.example` to `.dev.vars` and set
+`BACKEND_ORIGIN` to an HTTPS API you control. `.dev.vars` is ignored by Git.
+Never put OAuth/API credentials in `VITE_*` variables; those are compiled into
+public JavaScript.
+
+## Data durability and restore
+
+The preview template uses local SQLite and local report files. Durable snapshot
+support in `.env.example` is optional and requires credentials to a private
+backup repository or object store. Set the provider credentials as secrets in
+your hosting dashboard, verify that snapshots complete, and test restoring to
+a clean service before storing real user data. A backup that has not been
+restored in a test is not verified. Keep the code repository separate from
+the private snapshot repository.
+
+For production with multiple users or replicas, use supported shared storage
+and a database/concurrency design intended for that topology; do not attach
+multiple API replicas to one arbitrary SQLite filesystem. Review README's
+operational limits, password reset, rate limiting and backup notes before
+opening registration.

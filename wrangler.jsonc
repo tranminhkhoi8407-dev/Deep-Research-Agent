@@ -3,9 +3,6 @@
   "name": "deep-research-agent",
   "compatibility_date": "2026-10-01",
   "main": "./worker/index.js",
-  "vars": {
-    "BACKEND_ORIGIN": "https://nexora-api-preview.onrender.com",
-  },
   "observability": {
     "enabled": true,
   },

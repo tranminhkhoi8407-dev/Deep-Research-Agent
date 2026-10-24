@@ -12,6 +12,10 @@ riêng cho quy trình nghiên cứu, phân tích paper và kiểm tra citation.
 
 Muốn chạy thử? Bắt đầu tại [hướng dẫn clone và chạy local](#getting-started).
 
+Repository dùng giấy phép [MIT](LICENSE). Hướng dẫn đóng góp, quy tắc ứng xử
+và quy trình báo cáo lỗ hổng nằm trong [CONTRIBUTING.md](CONTRIBUTING.md),
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) và [SECURITY.md](SECURITY.md).
+
 ## Dự án nghiên cứu cộng tác
 
 Sau khi đăng nhập web app, mở **Dự án / Projects** từ thanh điều hướng hoặc
@@ -70,12 +74,13 @@ proxy WebSocket cho đường `/api` (đã cấu hình trong `frontend/vite.conf
 Trên Windows, launcher kiểm tra đúng thư mục làm việc và loại tiến trình trước
 khi dừng server cũ; xử lý cả worker Python còn giữ socket sau khi reloader cha
 đã thoát và Vite được chạy bằng đường dẫn tương đối. Không dừng ứng dụng khác
-chỉ vì đang giữ cổng. Cài `backend/requirements.txt` để có dependency kiểm tra
-tiến trình. Dùng `./run-app.ps1 -CheckOnly` để kiểm tra mà không dừng server;
+chỉ vì đang giữ cổng. Dùng `./run-app.ps1 -CheckOnly` để kiểm tra mà không dừng server;
 `-NoBrowser` để chạy mà không tự mở trình duyệt. Không chạy hai launcher đồng
 thời; nếu cổng thuộc dự án khác hoặc không xác minh được, launcher sẽ dừng và
 báo lỗi cụ thể. Việc khởi động lại sẽ ngắt các phiên đang chạy trên server cũ.
-Khi triển khai production cần HTTPS/WSS, `AUTH_SESSION_SECRET` mạnh,
+Cài `requirements.txt` đã khóa phiên bản để có các package backend, gồm cả
+`psutil` mà launcher dùng để kiểm tra tiến trình. Khi triển khai production
+cần HTTPS/WSS, `AUTH_SESSION_SECRET` mạnh,
 `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS` chính xác, backup định kỳ và quy định
 giữ/xóa dữ liệu của host. Thiết kế hiện tại phù hợp một host SQLite với số
 người cùng sửa vừa phải; chưa phải dịch vụ cộng tác phân tán quy mô lớn.
@@ -90,12 +95,11 @@ toàn hệ thống. Khi phục hồi mốc, nội dung hiện tại được lư
 ### Yêu cầu
 
 - Git.
-- Python 3.11 trở lên.
-- Node.js bản LTS kèm npm để chạy giao diện web.
+- Nếu dùng Docker Compose để chạy cả ứng dụng: Docker Desktop với Linux containers/engine đang hoạt động. Không cần cài Python hay Node.js trên máy host.
+- Nếu chạy từ mã nguồn: Python 3.11 trở lên và Node.js bản LTS kèm npm.
 - Một API key cho LLM (Groq, Google Gemini hoặc OpenAI) và một
   [Tavily API key](https://tavily.com) để tìm kiếm web. Tài khoản/provider có
   thể tính phí hoặc giới hạn quota riêng; hãy kiểm tra chính sách của họ.
-- Docker Desktop chỉ cần nếu muốn chạy backend bằng Docker.
 
 ### 1. Clone repository
 
@@ -110,7 +114,48 @@ cd deep-research-agent
 Thay `<URL-HTTPS-cua-repository>` bằng URL thật của repository. Nếu bạn clone
 vào thư mục có tên khác, dùng tên thư mục đó ở lệnh `cd`.
 
-### 2. Tạo môi trường Python và cài backend
+### Chạy nhanh cả app bằng Docker Compose
+
+Đây là đường chạy được khuyên dùng nếu bạn chỉ muốn sử dụng ứng dụng: Docker
+đóng gói API Python và frontend đã build, còn Nginx chuyển tiếp API và
+WebSocket cùng origin. Máy host chỉ cần Git và Docker Desktop đang chạy; không
+cần cài Python, Node.js, npm, PostgreSQL hay MySQL.
+
+Tạo file cấu hình riêng từ mẫu (lệnh chạy tại thư mục repository):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Trên macOS/Linux:
+
+```bash
+cp .env.example .env
+```
+
+Nếu `.env` đã có từ lần chạy trước, không copy lại vì thao tác này sẽ thay
+file đang chứa cấu hình/key của bạn bằng mẫu.
+
+Mở `.env` bằng trình soạn thảo, điền ít nhất `GROQ_API_KEY` (hoặc key cho
+provider đã chọn ở `LLM_PROVIDER`) và `TAVILY_API_KEY`. Giữ nguyên URL local
+mặc định cho lần chạy đầu. `.env` chứa secrets nên không commit hoặc tải lên
+GitHub; `.env.example` là mẫu an toàn để chia sẻ.
+
+Khởi động toàn bộ ứng dụng bằng một lệnh:
+
+```bash
+docker compose up --build -d
+```
+
+Chờ hai service `api` và `web` báo trạng thái `healthy`/`running` trong
+`docker compose ps`, sau đó mở <http://127.0.0.1:5173>. Kiểm tra API qua
+<http://127.0.0.1:5173/health>. Xem log bằng `docker compose logs -f` (nhấn
+`Ctrl+C` chỉ thoát chế độ xem log, không dừng app). Dừng app bằng
+`docker compose down`; database và reports vẫn được giữ. Chi tiết về dữ liệu,
+backup, OAuth, cổng và các profile CLI/Studio ở mục
+[Docker Compose](#docker-compose).
+
+### 2. Tạo môi trường Python và cài backend (chỉ chạy từ mã nguồn)
 
 Trên Windows PowerShell:
 
@@ -118,7 +163,7 @@ Trên Windows PowerShell:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt -r backend\requirements.txt
+python -m pip install --require-hashes -r requirements.txt
 ```
 
 Nếu PowerShell chặn kích hoạt môi trường, chỉ mở quyền cho cửa sổ hiện tại rồi
@@ -135,15 +180,17 @@ Trên macOS/Linux:
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt -r backend/requirements.txt
+python -m pip install --require-hashes -r requirements.txt
 ```
 
-`requirements.txt` cài LangGraph, LangChain, các adapter LLM, Tavily, công cụ
-CLI và thư viện xử lý tài liệu. `backend/requirements.txt` cài FastAPI,
-WebSocket, SQLite collaboration support, upload và các thư viện phụ trợ. Cài
-cả hai file để chạy đầy đủ ứng dụng.
+`requirements.txt` là lockfile runtime có phiên bản và hash cho Python 3.11;
+nó đã bao gồm LangGraph, các adapter LLM, FastAPI, WebSocket, upload, SQLite
+collaboration support và các package backend. `requirements.in` cùng
+`backend/requirements.txt` là đầu vào để bảo trì danh sách dependency; sau khi
+sửa chúng, cập nhật lock bằng lệnh uv trong mục **Kiểm tra và build**. Không
+cài `pytest` hay LangGraph CLI vào image API mặc định.
 
-### 3. Tạo và điền `.env`
+### 3. Tạo và điền `.env` (chạy từ mã nguồn hoặc Docker)
 
 Tại thư mục gốc repository:
 
@@ -166,10 +213,14 @@ Mở `.env` và điền các giá trị sau:
 | `TAVILY_API_KEY` | Tìm kiếm web | Điền API key Tavily. Khi thiếu biến này, các yêu cầu research cần tìm kiếm web sẽ không lấy được nguồn mới. |
 | `AUTH_SESSION_SECRET` | Ký session đăng nhập | Có thể để mẫu cho lần chạy local đầu tiên; trước khi public server, bắt buộc thay bằng secret ngẫu nhiên mạnh. |
 | `APP_ENV`, `AUTH_DEV_LOGIN`, `AUTH_COOKIE_SECURE` | Đăng nhập local | Giữ mặc định `development`, `true`, `false` để hiện nút tài khoản development trên máy local. Không bật đăng nhập development trên production. |
-| `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` | Kết nối web/API | Giữ URL local `127.0.0.1` khi chạy theo hướng dẫn này. Khi dùng domain khác, cập nhật đúng origin và bật HTTPS. |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Đăng nhập Google | Tùy chọn cho local; callback mặc định là `http://127.0.0.1:8000/api/auth/callback/google`. |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Đăng nhập GitHub | Tùy chọn cho local; callback mặc định là `http://127.0.0.1:8000/api/auth/callback/github`. |
+| `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` | Kết nối web/API và OAuth | Giữ URL local `127.0.0.1` khi chạy theo hướng dẫn này. Docker Compose tự đặt URL API/callback cùng origin với web (mặc định port 5173); chạy source dùng backend port 8000. Khi đổi domain/port, cập nhật đúng origin. |
+| `WEB_PORT` | Cổng web Docker trên máy host | Mặc định `5173`. Chỉ đổi nếu cổng đang bận; nếu bật OAuth thì đồng bộ `FRONTEND_URL` và callback URI. |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Đăng nhập Google | Tùy chọn. Callback Docker Compose mặc định `http://127.0.0.1:5173/api/auth/callback/google`; callback khi chạy source là `http://127.0.0.1:8000/api/auth/callback/google`. |
+| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Đăng nhập GitHub | Tùy chọn. Callback Docker Compose mặc định `http://127.0.0.1:5173/api/auth/callback/github`; callback khi chạy source là `http://127.0.0.1:8000/api/auth/callback/github`. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | Khôi phục mật khẩu | Tùy chọn local; cần cấu hình để gửi email reset trong production. Port 587 dùng STARTTLS; port 465 đặt `SMTP_USE_SSL=true`. Không có SMTP trong production thì API báo tính năng chưa được cấu hình, không tạo link reset vào log. |
+| `AUTH_CREDENTIAL_RATE_LIMIT`, `AUTH_CREDENTIAL_IP_RATE_LIMIT`, `AUTH_CREDENTIAL_RATE_WINDOW_SECONDS` | Chống thử mật khẩu liên tục | Mặc định 20 lần mỗi định danh và 120 lần mỗi địa chỉ peer trong 600 giây. Bộ đếm nằm trong SQLite, chia sẻ giữa các worker cùng host; không thay thế giới hạn ở CDN/proxy khi mở Internet. |
 | `ADMIN_EMAILS` | Host Console | Email tài khoản được cấp vai trò Host, phân tách bằng dấu phẩy. Để trống nếu không cần Host Console. |
+| `VITE_API_BASE_URL`, `VITE_PRO_MONTHLY_PRICE`, `VITE_TEAM_MONTHLY_PRICE` | Build frontend Docker | Các giá trị công khai được nhúng vào frontend lúc build. Để API base trống khi dùng Compose mặc định; không bao giờ đặt API key hoặc secret vào biến `VITE_*`. |
 
 Tùy chọn nâng cao: `LANGSMITH_TRACING=true` cùng `LANGSMITH_API_KEY` bật
 tracing cho graph; OpenCode worker cần cấu hình riêng như
@@ -180,10 +231,11 @@ GitHub/R2 chỉ cần khi host có filesystem tạm, xem phần comments trong
 
 Các biến `VITE_PRO_MONTHLY_PRICE` và `VITE_TEAM_MONTHLY_PRICE` chỉ điều khiển
 con số hiển thị; bản self-hosted không tích hợp thu tiền hay tự cấp license.
-Vite đọc biến `VITE_*` từ `frontend/.env`, không phải root `.env`. Không thêm
-API key, OAuth secret hoặc secret server vào bất kỳ biến `VITE_*` nào: frontend
-build sẽ nhúng chúng vào JavaScript công khai. File `.env` đã được Git bỏ qua;
-không commit file này.
+Vite khi chạy từ source đọc biến `VITE_*` từ `frontend/.env`. Docker Compose
+đọc các biến build-time `VITE_*` ở root `.env` để truyền thành build arguments.
+Các giá trị này sẽ được nhúng vào JavaScript công khai. Không thêm API key,
+OAuth secret hoặc secret server vào bất kỳ biến `VITE_*` nào. Root `.env` và
+`frontend/.env` đã được Git bỏ qua; không commit các file này.
 
 ### 4. Database và thư mục dữ liệu
 
@@ -206,7 +258,13 @@ ghi xong journal/WAL trước khi copy. Không xóa file database để “reset
 còn cần dữ liệu. SQLite phù hợp cho một host; không đặt database lên nhiều
 worker hay một filesystem chia sẻ tùy tiện.
 
-### 5. Cài frontend
+Với Docker Compose, hai thư mục này nằm trong named volumes
+`nexora_data`/`nexora_reports` thay vì thư mục source trên máy host. Vì thế,
+build lại image hoặc chạy `docker compose down` không xóa database. Xóa volume
+(`docker compose down --volumes`) sẽ xóa vĩnh viễn dữ liệu local; luôn backup
+trước khi xóa volume hoặc Docker data.
+
+### 5. Cài frontend (chỉ chạy từ mã nguồn)
 
 Tại thư mục gốc repository:
 
@@ -220,7 +278,7 @@ mặc định: Vite đã proxy `/api`, `/ws` và `/health` đến backend. Chỉ
 hoặc cần đặt `VITE_API_BASE_URL`; các biến trong file này là cấu hình công
 khai, không phải nơi lưu secret.
 
-### 6. Khởi động ứng dụng
+### 6. Khởi động ứng dụng từ mã nguồn
 
 Trên Windows, sau khi cài Python dependencies và Node/npm, có thể chạy cả
 backend và frontend bằng:
@@ -271,43 +329,222 @@ LLM/tìm kiếm thực tế phụ thuộc đường đi graph và kết quả đ
 interactive, `--user-id` chọn namespace research profile trong store của tiến
 trình hiện tại.
 
-### Chạy backend bằng Docker (tùy chọn)
+### Docker Compose
 
-Sau khi tạo `.env` và cài Docker Desktop:
+Docker Compose khởi động hai service mặc định: `api` chạy FastAPI/LangGraph
+và `web` phục vụ frontend React đã build qua Nginx. Nginx chuyển tiếp REST,
+upload, health check và WebSocket đến API; trình duyệt chỉ cần kết nối cùng
+origin tại `http://127.0.0.1:5173`. API không publish cổng ra máy host. Đây là
+cách chạy đầy đủ ứng dụng bằng một lệnh, không phải chỉ một container backend.
+
+#### Khởi chạy, xem log, cập nhật và dừng
+
+Tạo root `.env` theo bước `.env` ở trên. Sau khi Docker Desktop/Linux engine
+đang chạy, từ thư mục gốc repository chạy:
 
 ```bash
-docker compose up --build api
+docker compose up --build -d
 ```
 
-Lệnh này chạy backend API; frontend vẫn cần chạy bằng Vite như hướng dẫn trên.
-Compose mount `reports/` nhưng không mount mặc định thư mục SQLite `data/` vào
-host. Nếu dùng Docker để giữ dữ liệu qua lần tạo lại container, hãy thêm bind
-mount `./data:/app/data` vào service `api` trong `docker-compose.yml` trước
-khi có dữ liệu thật. Dừng bằng `docker compose down`.
+Lệnh này build API và frontend, tạo hai named volumes, rồi chạy app nền. Lần
+build đầu có thể mất nhiều thời gian vì backend cài TeX Live để xuất PDF và
+frontend cài các package npm. Kiểm tra trạng thái và log:
+
+```bash
+docker compose ps
+docker compose logs -f api web
+```
+
+Mở <http://127.0.0.1:5173>. Các địa chỉ hữu ích:
+
+- Web app: `http://127.0.0.1:5173`
+- Health check API qua proxy: `http://127.0.0.1:5173/health`
+- FastAPI docs qua proxy: `http://127.0.0.1:5173/docs`
+
+Nhấn `Ctrl+C` sau `docker compose logs -f` chỉ thoát theo dõi log. Dừng các
+container mà vẫn giữ dữ liệu:
+
+```bash
+docker compose down
+```
+
+Khi cập nhật mã nguồn, kéo commit mới rồi build/chạy lại:
+
+```bash
+docker compose up --build -d
+```
+
+Compose phục vụ bản frontend đã build và API image tự chứa; thay đổi source
+không tự hot-reload. Nginx hỗ trợ WebSocket và giữ kết nối dài cho research
+streaming. `WEB_PORT` trong root `.env` có thể đổi cổng phía host nếu `5173`
+đã bận, ví dụ `WEB_PORT=5180`; khi dùng OAuth phải đồng thời đặt
+`FRONTEND_URL=http://127.0.0.1:5180` và cập nhật callback trong Google/GitHub.
+
+#### `.env`, API keys và OAuth
+
+Compose đọc secrets từ root `.env` bằng `env_file`; các URL chạy Docker được
+ghi đè theo cùng origin để callback OAuth quay về Nginx. Giữ các mặc định
+local khi chạy trên máy cá nhân. Cần có key của provider được chọn trong
+`LLM_PROVIDER` và `TAVILY_API_KEY` để tính năng research gọi model và tìm kiếm
+web. Ứng dụng có thể mở UI/health check khi thiếu key, nhưng research tương
+ứng sẽ báo chưa cấu hình.
+
+Đăng nhập Google/GitHub trong Docker Compose dùng callback mặc định:
+
+```text
+http://127.0.0.1:5173/api/auth/callback/google
+http://127.0.0.1:5173/api/auth/callback/github
+```
+
+Khi chạy source bằng FastAPI + Vite, callback khác vì OAuth đi thẳng đến
+backend: `http://127.0.0.1:8000/api/auth/callback/google` và
+`http://127.0.0.1:8000/api/auth/callback/github`. Đăng ký đúng URL tương ứng
+trong OAuth provider. Không cần OAuth để thử local: mặc định có tài khoản
+development; tính năng đó chỉ dành cho máy local và phải tắt trước khi đưa
+ứng dụng ra Internet.
+
+Root `.env` không được Git theo dõi; chỉ commit `.env.example` không chứa key
+thật. Trong production, dùng secret ngẫu nhiên mạnh cho
+`AUTH_SESSION_SECRET`, `APP_ENV=production`, `AUTH_DEV_LOGIN=false`,
+`AUTH_COOKIE_SECURE=true`, domain/HTTPS đúng và chỉ định `ADMIN_EMAILS` tối
+thiểu cần thiết. Compose mặc định chỉ bind web vào `127.0.0.1`, có cấu hình
+development và không tự cung cấp HTTPS. Đừng mở cổng này trực tiếp ra Internet;
+trước khi tự host công khai cần làm theo mục
+[Vận hành, bảo mật và giới hạn](#vận-hành-bảo-mật-và-giới-hạn-hiện-tại), cấu
+hình TLS/reverse proxy, storage bền vững, backup và email khôi phục tài khoản.
+
+#### Database, reports và backup
+
+Không cần cài hoặc tạo PostgreSQL/MySQL. Backend tự tạo các SQLite database
+trong `/app/data`; Compose giữ thư mục đó trong volume `nexora_data`. Reports
+và artifact xuất ra nằm trong `/app/reports`, được giữ ở `nexora_reports`.
+Build lại image, `docker compose stop` hay `docker compose down` không xóa hai
+volume này. Tên volume được Compose gắn với tên project; giữ nguyên thư mục
+repository/project name để Compose tìm đúng dữ liệu.
+
+**`docker compose down --volumes` xóa cả database và reports.** Chỉ chạy lệnh
+này khi thực sự muốn xóa dữ liệu. Trước khi xóa Docker data, chuyển máy hoặc
+nâng cấp có rủi ro, tạo backup bên ngoài repository. Dừng web/API và mọi CLI/
+Studio đang chạy để tránh SQLite hoặc report thay đổi giữa lúc sao chép. Trên
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force ..\nexora-backup | Out-Null
+docker compose stop web api
+docker compose cp --archive api:/app/data ..\nexora-backup\data
+docker compose cp --archive api:/app/reports ..\nexora-backup\reports
+docker compose start api web
+```
+
+Trên macOS/Linux:
+
+```bash
+mkdir -p ../nexora-backup
+docker compose stop web api
+docker compose cp --archive api:/app/data ../nexora-backup/data
+docker compose cp --archive api:/app/reports ../nexora-backup/reports
+docker compose start api web
+```
+
+Giữ cả hai thư mục backup ở nơi an toàn, mã hóa nếu có dữ liệu cá nhân và
+không commit/upload công khai. Backup `data` gồm account, profile, paper,
+notebook, file đính kèm và các database ứng dụng; backup `reports` gồm report
+và artifact. `.env` cũng cần được backup riêng một cách an toàn vì database
+không chứa API/OAuth secrets. Định kỳ thử restore vào một Compose project mới;
+backup chưa được kiểm tra restore chưa thể coi là backup đã xác minh. Các lệnh
+`docker compose cp --archive` yêu cầu Docker Compose plugin hỗ trợ tùy chọn
+`--archive`.
+
+Khôi phục backup sang một bộ volume mới (đổi tên project Compose thành
+`nexora-restore`) trên máy mới:
+
+1. Đặt `.env` với secrets/domain phù hợp ở root. Dừng stack cũ bằng
+   `docker compose down` để giải phóng cổng web; lệnh này không xóa volume cũ.
+2. Khởi tạo volume mới và chờ API healthy:
+
+   ```bash
+   docker compose -p nexora-restore up -d api
+   docker compose -p nexora-restore ps
+   ```
+
+3. Sau khi API healthy, dừng API, chép cả hai thư mục backup vào volume mới,
+   rồi khởi động toàn bộ stack. PowerShell:
+
+   ```powershell
+   docker compose -p nexora-restore stop api
+   docker compose -p nexora-restore cp --archive ..\nexora-backup\data api:/app/data
+   docker compose -p nexora-restore cp --archive ..\nexora-backup\reports api:/app/reports
+   docker compose -p nexora-restore up --build -d
+   ```
+
+   macOS/Linux:
+
+   ```bash
+   docker compose -p nexora-restore stop api
+   docker compose -p nexora-restore cp --archive ../nexora-backup/data api:/app/data
+   docker compose -p nexora-restore cp --archive ../nexora-backup/reports api:/app/reports
+   docker compose -p nexora-restore up --build -d
+   ```
+
+Sau khi restore, chạy các lệnh Compose tiếp theo với `-p nexora-restore` để
+tiếp tục dùng đúng volumes đã khôi phục. Trước khi chuyển người dùng sang app,
+kiểm tra `/health`, đăng nhập thử và mở một report/notebook đã có. Giữ nguyên
+backup gốc cho đến khi đã xác minh dữ liệu được phục hồi đầy đủ.
+
+#### CLI và LangGraph Studio tùy chọn
+
+Hai service này không tự khởi động khi chạy lệnh Compose mặc định. Chạy CLI
+trong container, không cần Python trên host:
+
+```bash
+docker compose --profile cli run --build --rm cli "RAG là gì?" --max-analysts 1 --depth quick --no-interrupt
+```
+
+Mở LangGraph Studio local:
+
+```bash
+docker compose --profile studio up --build langgraph-studio
+```
+
+Studio ở `http://127.0.0.1:8123` (và API Studio ở cổng `2024`), chỉ bind
+localhost. Studio mở graph analyst/interview trong `agent/graph.py`, không
+phải graph web evidence-first. Không public Studio trên Internet.
 
 ### Deploy frontend lên Cloudflare Workers
 
-Worker `deep-research-agent` hiện phục vụ **frontend tĩnh**; nó không chạy
-FastAPI/Python. Từ thư mục gốc project, chạy `npm ci`, sau đó `npm run build`
-để cài dependencies của frontend và tạo `frontend/dist`. Đăng nhập Wrangler
-một lần bằng `npx wrangler login`, rồi chạy `npm run deploy` để build và deploy
-theo `wrangler.jsonc`.
+Worker Cloudflare chỉ phục vụ **frontend tĩnh**; nó không chạy FastAPI/Python.
+Mỗi người deploy cần backend riêng. `wrangler.jsonc` cố ý không có backend
+origin mặc định để fork mới không gửi request hoặc dữ liệu về server preview
+của maintainer. Khi `BACKEND_ORIGIN` chưa được cấu hình, Worker trả `503` cho
+API thay vì tự chọn server khác.
 
-Backend thử nghiệm đang chạy tại Render và Worker chuyển tiếp `/api/*`,
-`/ws/*`, `/health` qua `BACKEND_ORIGIN` trong `wrangler.jsonc`. Frontend dùng
-cùng domain với API nên không cần `VITE_API_BASE_URL`. Kiểm tra
-`https://deep-research-agent.tranminhkhoi8407.workers.dev/health` trước khi
-thử đăng nhập. `FRONTEND_URL`, `BACKEND_URL` và `CORS_ORIGINS` trên Render đều
-dùng chính xác domain Worker. OAuth callback tương ứng là
-`https://deep-research-agent.tranminhkhoi8407.workers.dev/api/auth/callback/google`
-hoặc `/github`. Không đặt OAuth secret hay API secret có tiền tố `VITE_`: các
-biến `VITE_*` được nhúng vào mã frontend. Hướng dẫn và giới hạn Render Free
-nằm trong [docs/render-deploy.md](docs/render-deploy.md).
+Để chạy frontend trên Cloudflare:
+
+1. Tạo backend riêng qua Docker trên host có lưu trữ bền vững hoặc theo
+   [hướng dẫn Render preview](docs/render-deploy.md). Lấy URL HTTPS của API.
+2. Đăng nhập Wrangler bằng `npx wrangler login`. Từ root chạy `npm ci` rồi
+   `npm run deploy` để build và deploy Worker.
+3. Thiết lập biến Worker `BACKEND_ORIGIN` bằng URL backend của chính bạn trong
+   Cloudflare Dashboard → Worker → Settings → Variables and Secrets; hoặc dùng
+   `npx wrangler secret put BACKEND_ORIGIN` rồi nhập URL. Đây là URL kết nối,
+   không phải API key, nhưng nên cấu hình ngoài Git để mỗi fork tự chọn server.
+4. Đặt `FRONTEND_URL`, `BACKEND_URL` và `CORS_ORIGINS` của backend thành cùng
+   origin Cloudflare Worker. Đăng ký callback OAuth trên origin đó:
+   `/api/auth/callback/google` hoặc `/api/auth/callback/github`.
+
+Trong local `wrangler dev`, copy `.dev.vars.example` thành `.dev.vars` và đặt
+`BACKEND_ORIGIN` là backend HTTPS bạn kiểm soát. Không dùng URL preview của
+repository này cho dữ liệu thật. Không đặt OAuth secret hay API secret có tiền
+tố `VITE_`: các biến `VITE_*` được nhúng vào mã frontend.
 
 Nếu đăng nhập Wrangler qua trình duyệt gặp lỗi CSRF, có thể dùng API token
 Cloudflare được giới hạn quyền Workers Edit trong biến môi trường của terminal
 hiện tại (`CLOUDFLARE_API_TOKEN`, kèm `CLOUDFLARE_ACCOUNT_ID` nếu cần). Không
 commit token vào repository và không gửi token qua chat.
+
+Tệp `render.yaml` là cấu hình **preview**. Trước khi dùng tài khoản thật, hãy
+đọc giới hạn dữ liệu và backup trong [docs/render-deploy.md](docs/render-deploy.md);
+không xem triển khai preview là cấu hình production.
 
 ### Đăng nhập và bảo vệ session
 
@@ -339,12 +576,16 @@ Tạo secret bằng lệnh:
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-Với **Google Cloud Console**, tạo OAuth Client loại **Web application**, thêm
-redirect URI sau rồi điền credential vào `.env`:
+Với **Google Cloud Console**, tạo OAuth Client loại **Web application**. Chọn
+callback đúng theo cách khởi chạy app; khi dùng Docker Compose (hướng dẫn một
+lệnh ở trên), thêm URI này:
 
 ```text
-http://127.0.0.1:8000/api/auth/callback/google
+http://127.0.0.1:5173/api/auth/callback/google
 ```
+
+Nếu chạy backend và Vite từ source thay vì Compose, dùng
+`http://127.0.0.1:8000/api/auth/callback/google`.
 
 ```env
 GOOGLE_CLIENT_ID=...
@@ -352,20 +593,25 @@ GOOGLE_CLIENT_SECRET=...
 ```
 
 Với **GitHub → Settings → Developer settings → OAuth Apps**, đặt Authorization
-callback URL rồi điền credential:
+callback URL theo cách chạy app. Docker Compose dùng:
 
 ```text
-http://127.0.0.1:8000/api/auth/callback/github
+http://127.0.0.1:5173/api/auth/callback/github
 ```
+
+Chạy từ source thì dùng `http://127.0.0.1:8000/api/auth/callback/github`.
 
 ```env
 GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 ```
 
-Sau khi sửa `.env`, dừng ứng dụng bằng `Ctrl+C` và chạy lại `./run-app.ps1`.
-Hai nút sẽ tự chuyển từ **Chưa cấu hình** sang trạng thái có thể bấm. Khi dùng
-domain thật, thay hai callback URL bằng `BACKEND_URL` tương ứng và bật HTTPS.
+Sau khi sửa `.env`, nếu chạy Windows source mode thì dừng ứng dụng bằng
+`Ctrl+C` và chạy lại `./run-app.ps1`. Nếu chạy Docker Compose, cập nhật
+container API bằng `docker compose up -d --force-recreate api`; nếu sửa biến
+`VITE_*` thì build lại frontend bằng `docker compose up --build -d web`. Hai
+nút sẽ tự chuyển từ **Chưa cấu hình** sang trạng thái có thể bấm. Khi dùng
+domain thật, thay callback bằng URL HTTPS public mà người dùng truy cập.
 
 Pipeline research của web app chạy theo hướng evidence-first: phân tích brief,
 tìm và đọc một số nguồn trong giới hạn ngân sách, đánh giá câu hỏi nào còn
@@ -800,10 +1046,11 @@ trong file chưa làm node chạy nếu không nối nó vào graph.
   store hiện tại là `MemorySaver`/`InMemoryStore` trong RAM, không phải lưu
   checkpoint bền vững. Khởi động lại process sẽ mất state đang dở và research
   profile của graph CLI.
-- **Dev proxy và WebSocket:** khi chạy local, truy cập qua Vite ở port 5173;
-  `frontend/vite.config.ts` chuyển `/api`, `/ws`, `/health` sang port 8000.
-  Nếu đổi proxy/reverse proxy, phải cho phép WebSocket upgrade và gửi cookie
-  credentials đúng origin.
+- **Dev proxy và WebSocket:** khi chạy source local, truy cập qua Vite ở port
+  5173; `frontend/vite.config.ts` chuyển `/api`, `/ws`, `/health` sang port
+  8000. Trong Docker Compose, Nginx phục vụ frontend và chuyển tiếp các đường
+  này đến API nội bộ. Reverse proxy khác phải cho phép WebSocket upgrade và
+  gửi cookie credentials đúng origin.
 - **Database và cộng tác:** SQLite + một backend host là cấu hình mục tiêu
   hiện tại. Dữ liệu Yjs ghi thành log cập nhật append-only, chưa tự compact;
   theo dõi dung lượng DB và không sửa log bằng tay. Bản version notebook là
@@ -811,7 +1058,13 @@ trong file chưa làm node chạy nếu không nối nó vào graph.
 
 ### LangGraph Studio
 
-Sau khi cài requirements và cấu hình `.env`, từ root chạy:
+Khi chạy Studio từ source, cài environment riêng và cấu hình `.env`:
+
+```bash
+python -m pip install --require-hashes -r requirements-studio.txt
+```
+
+Sau đó từ root chạy:
 
 ```bash
 langgraph dev
@@ -824,7 +1077,7 @@ nó không khởi chạy FastAPI, React app hay các API đăng nhập/cộng t�
 
 Trong `agent/nodes.py`, graph interview có thể đổi `SECOND_SOURCE` giữa
 `"wikipedia"` (mặc định) và `"arxiv"`. Gói `arxiv` và `pymupdf` đã được khai
-báo trong `requirements.txt`.
+báo trong runtime lock.
 
 ## Kiểm tra và build
 
@@ -832,23 +1085,50 @@ Các lệnh sau chạy trong máy developer; một số integration/browser chec
 thể cần API key, server hoặc trình duyệt riêng:
 
 ```bash
+python -m pip install --require-hashes -r requirements-dev.txt
 python -m pytest tests/ -v
 npm --prefix frontend run build
+node --test frontend/tests/*.test.mjs
 ```
 
-Python tests nằm trong `tests/`; frontend có các test Node/browser trong
+`requirements-dev.txt` cài runtime cùng pytest; `requirements-studio.txt`
+thêm LangGraph CLI cho Studio. Python tests nằm trong `tests/`; frontend có các test Node/browser trong
 `frontend/tests/` và script `test:*` trong `frontend/package.json`. Build
 frontend chạy TypeScript check trước khi tạo `frontend/dist/`. Graph compile
 không cần gọi provider, nhưng chạy research thật cần API key/model hợp lệ và
 quota còn dùng được.
 
+GitHub Actions trong `.github/workflows/ci.yml` tự chạy Python tests, frontend
+unit tests/build, kiểm tra advisory mức high/critical của npm và xác thực cấu
+hình Compose khi push hoặc mở pull request. Browser tests cần trình duyệt/server
+đang chạy nên không nằm trong workflow mặc định.
+
+Các lockfile được tạo từ `requirements.in` và `backend/requirements.txt`
+bằng uv. Sau khi đổi dependency, từ root cập nhật runtime lock rồi hai lock
+tùy chọn:
+
+```bash
+uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements.txt requirements.in backend/requirements.txt
+uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements-dev.txt requirements-dev.in
+uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements-studio.txt requirements-studio.in
+```
+
 ## Vận hành, bảo mật và giới hạn hiện tại
 
-- **Không phải deployment multi-host:** session registry, một số rate limit,
-  graph checkpoint và `InMemoryStore` nằm trong RAM của process. SQLite lock
-  và Yjs synchronization hiện giả định một backend host; không scale nhiều
-  replica sau load balancer khi chưa chuyển session/checkpoint/database sang
-  dịch vụ dùng chung.
+- **Không phải deployment multi-host:** session registry, avatar rate limit,
+  graph checkpoint và `InMemoryStore` vẫn nằm trong RAM của process. SQLite
+  lock, bộ đếm credential và Yjs synchronization giả định một backend host;
+  không scale nhiều replica trên nhiều host sau load balancer khi chưa chuyển
+  session/checkpoint/database/rate limit sang dịch vụ dùng chung.
+- **Rate limit và reverse proxy:** endpoint đăng ký/đăng nhập/khôi phục mật
+  khẩu dùng bộ đếm SQLite atomic theo cửa sổ trượt, đồng thời giới hạn socket
+  peer và định danh. Các key được HMAC trước khi lưu; bộ đếm được chia sẻ giữa
+  các worker cùng truy cập một database trên một host. API không đọc trực tiếp
+  `X-Forwarded-For`; Docker Nginx ghi đè header này. Nếu đặt sau CDN/proxy ngoài,
+  nhiều người có thể cùng hiện một peer IP, vì vậy hãy cấu hình rate limit ở
+  edge theo IP client và giữ backend chỉ truy cập được qua proxy. Khi dùng
+  nhiều host, cần một rate-limit store dùng chung; tăng replica mà mỗi host
+  giữ SQLite riêng sẽ không chia sẻ bộ đếm.
 - **Lưu trữ bền vững:** giữ `data/`, `reports/`, secrets cần thiết và file
   uploads khi chuyển máy. Render Free có filesystem ephemeral; xem
   [hướng dẫn Render](docs/render-deploy.md) trước khi dùng. Snapshot GitHub/R2
@@ -859,11 +1139,11 @@ quota còn dùng được.
   `AUTH_COOKIE_SECURE=true`, HTTPS/WSS, `FRONTEND_URL`, `BACKEND_URL` và
   `CORS_ORIGINS` đúng domain. Không public `.env`, OAuth/API keys, token hay
   database có dữ liệu người dùng. Đặt `ADMIN_EMAILS` tối thiểu cần thiết.
-- **Quên mật khẩu:** luồng đặt lại hiện ghi link chứa token vào log backend;
-  repository chưa nối dịch vụ gửi email. Token chỉ trả về response ở môi
-  trường không production, vì vậy người dùng production chưa nhận được email
-  khôi phục. Trước khi mở đăng ký cộng đồng, cần tích hợp mail provider hoặc
-  quy trình khôi phục an toàn khác; hạn chế quyền truy cập log trong lúc đó.
+- **Quên mật khẩu:** cấu hình SMTP bằng các biến `SMTP_*` trong `.env.example`
+  để production gửi link reset. App dùng SSL hoặc STARTTLS, link chỉ sống 60
+  phút và token không được ghi vào production log; nếu SMTP thiếu, endpoint
+  trả trạng thái cấu hình chưa sẵn sàng. Khi chạy local không có SMTP, link
+  chỉ được ghi log development và token có thể được trả trong response local.
 - **Tác vụ PDF:** bộ trích xuất làm việc trên text; PDF scan/ảnh không tự được
   OCR. Bảng, công thức và nhãn hình có thể cần đối chiếu PDF gốc.
 - **Tự host là tự vận hành:** chủ host chịu trách nhiệm chính sách lưu/xóa dữ
@@ -877,10 +1157,12 @@ quota còn dùng được.
 |---|---|
 | `No API key found for LLM_PROVIDER` | Kiểm tra tên `LLM_PROVIDER`, key đúng provider và `.env` ở root; dừng rồi chạy lại backend sau khi sửa. |
 | `Search not configured` hoặc research không có nguồn mới | Điền `TAVILY_API_KEY`. Kiểm tra quyền/quota Tavily và truy cập Internet của backend. |
-| `ModuleNotFoundError` khi chạy Python | Kích hoạt `.venv`, rồi cài lại cả `requirements.txt` và `backend/requirements.txt` bằng đúng Python trong môi trường đó. |
+| `ModuleNotFoundError` khi chạy Python | Kích hoạt `.venv`, rồi cài lại `requirements.txt` bằng đúng Python trong môi trường đó. |
 | npm báo thiếu package hoặc lỗi Vite | Cài Node.js/npm, chạy `npm --prefix frontend ci` từ root. |
-| Cổng 8000/5173 đang được dùng | Dừng instance Nexora cũ. `run-app.ps1 -CheckOnly` chỉ kiểm tra launcher trên Windows; nếu cổng thuộc app khác, đổi cổng/proxy đồng thời thay vì kill tiến trình không rõ chủ sở hữu. |
-| Trang mở nhưng API báo lỗi / WebSocket không kết nối | Dùng `http://127.0.0.1:5173`, kiểm tra backend `/health`, và giữ nguyên proxy trong `frontend/vite.config.ts`; reverse proxy phải hỗ trợ WebSocket. |
-| OAuth quay lại lỗi redirect/CORS/cookie | Callback URL phải khớp tuyệt đối với provider; kiểm tra `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` và HTTPS/cookie flags theo môi trường. Local có thể dùng tài khoản development thay OAuth. |
-| Dữ liệu biến mất sau khi thay container/redeploy | Xác nhận DB và reports nằm trên persistent disk/bind mount; Render Free không đảm bảo filesystem bền vững. Khôi phục từ bản backup đã kiểm tra. |
+| Docker báo không kết nối được engine/daemon | Mở Docker Desktop và chờ Linux engine chạy xong; `docker compose config` chỉ kiểm tra cấu hình, còn `build`/`up` cần daemon hoạt động. |
+| Docker build lần đầu chậm hoặc thiếu dung lượng | Image cài TeX Live cho xuất PDF; giải phóng dung lượng Docker hoặc tăng disk allocation rồi build lại. |
+| Cổng web 5173 đang được dùng | Docker Compose: đặt `WEB_PORT` thành cổng trống và đồng bộ `FRONTEND_URL`/OAuth callback nếu dùng OAuth. Source mode: kiểm tra Vite 5173 và API 8000; `run-app.ps1 -CheckOnly` chỉ kiểm tra launcher trên Windows. Không kill tiến trình không rõ chủ sở hữu. |
+| Trang mở nhưng API báo lỗi / WebSocket không kết nối | Docker: chạy `docker compose ps` và `docker compose logs api web`, kiểm tra `http://127.0.0.1:5173/health`. Source: giữ proxy trong `frontend/vite.config.ts` và kiểm tra API ở port 8000. Reverse proxy phải hỗ trợ WebSocket. |
+| OAuth quay lại lỗi redirect/CORS/cookie | Callback phải khớp tuyệt đối với cách chạy app: Compose mặc định callback qua port 5173, source qua backend port 8000. Kiểm tra `FRONTEND_URL`, `BACKEND_URL`, `CORS_ORIGINS` và cookie flags; dùng HTTPS khi public. |
+| Dữ liệu biến mất sau khi thay container/redeploy | Xác nhận DB và reports nằm trên named volume, persistent disk hoặc bind mount; Render Free không đảm bảo filesystem bền vững. Khôi phục từ bản backup đã kiểm tra. |
 | LangGraph Studio không hiện web graph | `langgraph.json` hiện đăng ký `agent/graph.py:graph`; API/web app dùng `agent/deep_research.py`. Chạy backend + Vite để xem sản phẩm web. |

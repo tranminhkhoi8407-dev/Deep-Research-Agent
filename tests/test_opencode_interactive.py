@@ -14,6 +14,9 @@ def fixture(tmp_path, monkeypatch):
     monkeypatch.setenv('RESEARCH_CHAT_DATABASE_PATH',str(tmp_path/'chat.db'))
     monkeypatch.setenv('OPENCODE_DIRECT_ENABLED','true')
     monkeypatch.setenv('OPENCODE_UPSTREAM_API_KEY','synthetic-key')
+    fake_cli = tmp_path / 'opencode-fixture'
+    fake_cli.touch()
+    monkeypatch.setattr(direct, 'binary', lambda: fake_cli)
     monkeypatch.setattr(chats,'run_turn',lambda _:None)
     app.dependency_overrides[current_user]=lambda:{'id':'owner'}
     with TestClient(app) as client:

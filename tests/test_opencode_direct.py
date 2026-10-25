@@ -18,6 +18,9 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setenv('OPENCODE_UPSTREAM_API_KEY', 'synthetic-provider-key')
     monkeypatch.setenv('OPENCODE_GATEWAY_TOKEN', 'synthetic-reader-token-with-32-characters')
     monkeypatch.setenv('OPENCODE_ALLOWED_MODELS', 'mimo-v2.6-flash-free,longcat-2.5-preview-free')
+    fake_cli = tmp_path / 'opencode-fixture'
+    fake_cli.touch()
+    monkeypatch.setattr(direct, 'binary', lambda: fake_cli)
     monkeypatch.setattr(oc, 'status', lambda: {'configured': False, 'ready': False, 'code': 'opencode_unreachable', 'models': [{'id':m,'name':m,'ready':True,'code':'ready','policy':'improvement_data','private_allowed':False} for m in direct.MODELS]})
     app.dependency_overrides[current_user] = lambda: {'id':'owner-one'}
     cid,jid,token=ident(),ident(),'synthetic-unique-lease-token-32-characters'

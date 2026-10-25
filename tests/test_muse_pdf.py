@@ -24,6 +24,9 @@ def fixture(tmp_path,monkeypatch):
     monkeypatch.setenv('REPORTS_DIR',str(tmp_path/'reports'))
     monkeypatch.setenv('OPENCODE_DIRECT_ENABLED','true')
     monkeypatch.setenv('OPENCODE_UPSTREAM_API_KEY','synthetic-key-never-sent')
+    fake_cli = tmp_path / 'opencode-fixture'
+    fake_cli.touch()
+    monkeypatch.setattr(direct, 'binary', lambda: fake_cli)
     monkeypatch.setattr(chats,'run_turn',lambda _:None)
     monkeypatch.setattr(oc,'status',lambda:{'configured':False,'ready':False,'code':'opencode_unreachable','models':[{'id':direct.DEFAULT_MODEL,'name':'Muse Spark 1.3 Free','ready':False,'code':'opencode_unreachable','private_allowed':False,'policy':'training_data'}]})
     app.dependency_overrides[current_user]=lambda:{'id':'owner'}

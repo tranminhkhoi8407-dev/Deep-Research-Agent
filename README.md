@@ -523,7 +523,8 @@ API thay vì tự chọn server khác.
 1. Tạo backend riêng qua Docker trên host có lưu trữ bền vững hoặc theo
    [hướng dẫn Render preview](docs/render-deploy.md). Lấy URL HTTPS của API.
 2. Đăng nhập Wrangler bằng `npx wrangler login`. Từ root chạy `npm ci` rồi
-   `npm run deploy` để build và deploy Worker.
+   `npm run deploy` để build và deploy Worker. Wrangler đã được khóa phiên bản
+   trong `package-lock.json`; `--keep-vars` giữ biến cấu hình đã đặt trên Worker.
 3. Thiết lập biến Worker `BACKEND_ORIGIN` bằng URL backend của chính bạn trong
    Cloudflare Dashboard → Worker → Settings → Variables and Secrets; hoặc dùng
    `npx wrangler secret put BACKEND_ORIGIN` rồi nhập URL. Đây là URL kết nối,
@@ -531,6 +532,17 @@ API thay vì tự chọn server khác.
 4. Đặt `FRONTEND_URL`, `BACKEND_URL` và `CORS_ORIGINS` của backend thành cùng
    origin Cloudflare Worker. Đăng ký callback OAuth trên origin đó:
    `/api/auth/callback/google` hoặc `/api/auth/callback/github`.
+
+Nếu bật Cloudflare Workers Builds để tạo preview cho pull request, đặt **Build
+command** là `npm run build` và **Preview command** là `npx wrangler preview`.
+Preview được tạo từ `previews` trong `wrangler.jsonc`; mặc định khối này để
+trống để fork không kết nối tới backend của maintainer. Vì vậy API preview trả
+`503` cho tới khi bạn cấu hình một `BACKEND_ORIGIN` an toàn riêng cho Preview.
+Preview không tự kế thừa biến production.
+
+Nếu dùng GitHub Actions bên dưới để deploy production, hãy bảo đảm Cloudflare
+Workers Builds không đồng thời deploy production từ nhánh `main`. Chỉ nên có
+một pipeline chịu trách nhiệm deploy Worker production.
 
 Trong local `wrangler dev`, copy `.dev.vars.example` thành `.dev.vars` và đặt
 `BACKEND_ORIGIN` là backend HTTPS bạn kiểm soát. Không dùng URL preview của
@@ -1102,6 +1114,16 @@ GitHub Actions trong `.github/workflows/ci.yml` tự chạy Python tests, fronte
 unit tests/build, kiểm tra advisory mức high/critical của npm và xác thực cấu
 hình Compose khi push hoặc mở pull request. Browser tests cần trình duyệt/server
 đang chạy nên không nằm trong workflow mặc định.
+
+Workflow cũng có CD production tùy chọn: khi các CI job đều xanh trên `main`,
+GitHub Actions có thể deploy API lên Render, đợi `/health`, build frontend rồi
+deploy Cloudflare Worker và kiểm tra `/health` công khai. CD tắt mặc định để
+fork không vô tình deploy. Cấu hình biến `CD_ENABLED=true`, `CLOUDFLARE_ACCOUNT_ID`,
+`BACKEND_ORIGIN` và `PUBLIC_APP_URL`, cùng secrets `RENDER_DEPLOY_HOOK_URL` và
+`CLOUDFLARE_API_TOKEN` trong GitHub Actions; xem đầy đủ các bước và cách tạo
+token trong [hướng dẫn Render/Cloudflare](docs/render-deploy.md). Tắt Auto-Deploy
+của Render để API chỉ deploy sau khi CI thành công. `workflow_dispatch` trên
+nhánh `main` cũng cho phép chạy lại deployment thủ công.
 
 Các lockfile được tạo từ `requirements.in` và `backend/requirements.txt`
 bằng uv. Sau khi đổi dependency, từ root cập nhật runtime lock rồi hai lock

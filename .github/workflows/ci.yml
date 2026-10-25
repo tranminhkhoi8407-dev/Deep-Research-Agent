@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 on:
   push:
@@ -33,7 +33,13 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install locked deployment tooling
+        run: npm ci
+      - name: Check deployment tooling advisories
+        run: npm audit --audit-level=high
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
       - name: Check for high or critical frontend advisories
@@ -52,3 +58,108 @@ jobs:
         run: cp .env.example .env
       - name: Validate Compose configuration
         run: docker compose config --quiet
+
+  deploy:
+    name: Deploy production (Render + Cloudflare)
+    if: ${{ vars.CD_ENABLED == 'true' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: [python, frontend, compose]
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Validate deployment settings
+        env:
+          CD_ENABLED: ${{ vars.CD_ENABLED }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
+          PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in CD_ENABLED CLOUDFLARE_ACCOUNT_ID BACKEND_ORIGIN PUBLIC_APP_URL RENDER_DEPLOY_HOOK_URL CLOUDFLARE_API_TOKEN; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing GitHub Actions setting: ${name}" >&2
+              exit 1
+            fi
+          done
+          [[ "$CD_ENABLED" == "true" ]]
+          [[ "$BACKEND_ORIGIN" == https://* ]]
+          [[ "$PUBLIC_APP_URL" == https://* ]]
+      - name: Install locked Wrangler tooling
+        run: npm ci
+      - name: Request Render deployment for this commit
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          set -euo pipefail
+          python - "$RENDER_DEPLOY_HOOK_URL" "$GITHUB_SHA" <<'PY'
+          import sys
+          from urllib.error import URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          hook, commit = sys.argv[1:]
+          separator = "&" if "?" in hook else "?"
+          url = f"{hook}{separator}{urlencode({'ref': commit})}"
+          try:
+              with urlopen(Request(url, method="POST"), timeout=30):
+                  pass
+          except (OSError, URLError) as error:
+              print(f"Render deploy hook failed ({type(error).__name__}).", file=sys.stderr)
+              raise SystemExit(1)
+          PY
+      - name: Wait for Render API health check
+        env:
+          BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
+        run: |
+          set -euo pipefail
+          health_url="${BACKEND_ORIGIN%/}/health"
+          for attempt in $(seq 1 80); do
+            if curl --silent --fail --max-time 15 --output /dev/null "$health_url"; then
+              echo "Render API health check passed."
+              exit 0
+            fi
+            echo "Waiting for Render API deployment ($attempt/80)."
+            sleep 15
+          done
+          echo "Render API did not become healthy within 20 minutes." >&2
+          exit 1
+      - name: Build frontend assets
+        run: npm run build
+      - name: Deploy Cloudflare Worker
+        env:
+          BACKEND_ORIGIN: ${{ vars.BACKEND_ORIGIN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config wrangler.jsonc --keep-vars --var "BACKEND_ORIGIN:${BACKEND_ORIGIN}" --message "GitHub Actions ${GITHUB_SHA}"
+      - name: Check public Worker health
+        env:
+          PUBLIC_APP_URL: ${{ vars.PUBLIC_APP_URL }}
+        run: |
+          set -euo pipefail
+          health_url="${PUBLIC_APP_URL%/}/health"
+          for attempt in $(seq 1 18); do
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$health_url" || true)"
+            if [[ "$status" == "200" ]]; then
+              echo "Public Worker health check passed."
+              exit 0
+            fi
+            echo "Waiting for public Worker health check ($attempt/18)."
+            sleep 10
+          done
+          echo "Public Worker did not return HTTP 200 after deployment." >&2
+          exit 1

@@ -21,10 +21,10 @@ Cảm ơn bạn muốn cải thiện dự án. Báo lỗi, đề xuất tính n�
 docker compose up --build -d
 ```
 
-Để phát triển từ source, cài `requirements.txt` cho runtime hoặc
-`requirements-dev.txt` nếu cần pytest; cài frontend bằng
+Để phát triển từ source, cài `lockfile/requirements.txt` cho runtime hoặc
+`lockfile/requirements-dev.txt` nếu cần pytest; cài frontend bằng
 `npm --prefix frontend ci`, rồi chạy API và Vite theo README. Dùng
-`requirements-studio.txt` nếu cần chạy LangGraph Studio. Không commit `.env`,
+`lockfile/requirements-studio.txt` nếu cần chạy LangGraph Studio. Không commit `.env`,
 database, report, file upload hoặc build artifacts.
 
 ## Trước khi gửi pull request

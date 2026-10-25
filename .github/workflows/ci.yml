@@ -18,9 +18,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements-dev.txt
+          cache-dependency-path: lockfile/requirements-dev.txt
       - name: Install locked dependencies
-        run: python -m pip install --require-hashes -r requirements-dev.txt
+        run: python -m pip install --require-hashes -r lockfile/requirements-dev.txt
       - name: Run Python tests
         run: python -m pytest -q tests/
 

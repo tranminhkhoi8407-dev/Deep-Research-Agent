@@ -1,6 +1,7 @@
 .env
 .env.*
 __pycache__/
+.pytest_cache/
 *.pyc
 .venv/
 venv/
@@ -8,9 +9,7 @@ reports/
 data/
 .langgraph_api/
 .tools/
-tmp/report-evaluation/
-tmp/pdfs/
-tmp/login-session-qa/
+tmp/
 output/pdf/
 *.egg-info/
 frontend/node_modules/
@@ -26,5 +25,3 @@ frontend/vite.config.d.ts
 .dev.vars*
 !.dev.vars.example
 !.env.example
-tmp/research-visuals-qa/
-data/opencode-direct/

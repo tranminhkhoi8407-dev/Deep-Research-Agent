@@ -78,7 +78,7 @@ chỉ vì đang giữ cổng. Dùng `./run-app.ps1 -CheckOnly` để kiểm tra 
 `-NoBrowser` để chạy mà không tự mở trình duyệt. Không chạy hai launcher đồng
 thời; nếu cổng thuộc dự án khác hoặc không xác minh được, launcher sẽ dừng và
 báo lỗi cụ thể. Việc khởi động lại sẽ ngắt các phiên đang chạy trên server cũ.
-Cài `requirements.txt` đã khóa phiên bản để có các package backend, gồm cả
+Cài `lockfile/requirements.txt` đã khóa phiên bản để có các package backend, gồm cả
 `psutil` mà launcher dùng để kiểm tra tiến trình. Khi triển khai production
 cần HTTPS/WSS, `AUTH_SESSION_SECRET` mạnh,
 `AUTH_COOKIE_SECURE=true`, `CORS_ORIGINS` chính xác, backup định kỳ và quy định
@@ -163,7 +163,7 @@ Trên Windows PowerShell:
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install --require-hashes -r requirements.txt
+python -m pip install --require-hashes -r lockfile/requirements.txt
 ```
 
 Nếu PowerShell chặn kích hoạt môi trường, chỉ mở quyền cho cửa sổ hiện tại rồi
@@ -180,12 +180,12 @@ Trên macOS/Linux:
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install --require-hashes -r requirements.txt
+python -m pip install --require-hashes -r lockfile/requirements.txt
 ```
 
-`requirements.txt` là lockfile runtime có phiên bản và hash cho Python 3.11;
+`lockfile/requirements.txt` là lockfile runtime có phiên bản và hash cho Python 3.11;
 nó đã bao gồm LangGraph, các adapter LLM, FastAPI, WebSocket, upload, SQLite
-collaboration support và các package backend. `requirements.in` cùng
+collaboration support và các package backend. `lockfile/requirements.in` cùng
 `backend/requirements.txt` là đầu vào để bảo trì danh sách dependency; sau khi
 sửa chúng, cập nhật lock bằng lệnh uv trong mục **Kiểm tra và build**. Không
 cài `pytest` hay LangGraph CLI vào image API mặc định.
@@ -1073,7 +1073,7 @@ trong file chưa làm node chạy nếu không nối nó vào graph.
 Khi chạy Studio từ source, cài environment riêng và cấu hình `.env`:
 
 ```bash
-python -m pip install --require-hashes -r requirements-studio.txt
+python -m pip install --require-hashes -r lockfile/requirements-studio.txt
 ```
 
 Sau đó từ root chạy:
@@ -1097,13 +1097,13 @@ Các lệnh sau chạy trong máy developer; một số integration/browser chec
 thể cần API key, server hoặc trình duyệt riêng:
 
 ```bash
-python -m pip install --require-hashes -r requirements-dev.txt
+python -m pip install --require-hashes -r lockfile/requirements-dev.txt
 python -m pytest tests/ -v
 npm --prefix frontend run build
 node --test frontend/tests/*.test.mjs
 ```
 
-`requirements-dev.txt` cài runtime cùng pytest; `requirements-studio.txt`
+`lockfile/requirements-dev.txt` cài runtime cùng pytest; `lockfile/requirements-studio.txt`
 thêm LangGraph CLI cho Studio. Python tests nằm trong `tests/`; frontend có các test Node/browser trong
 `frontend/tests/` và script `test:*` trong `frontend/package.json`. Build
 frontend chạy TypeScript check trước khi tạo `frontend/dist/`. Graph compile
@@ -1125,14 +1125,16 @@ token trong [hướng dẫn Render/Cloudflare](docs/render-deploy.md). Tắt Aut
 của Render để API chỉ deploy sau khi CI thành công. `workflow_dispatch` trên
 nhánh `main` cũng cho phép chạy lại deployment thủ công.
 
-Các lockfile được tạo từ `requirements.in` và `backend/requirements.txt`
-bằng uv. Sau khi đổi dependency, từ root cập nhật runtime lock rồi hai lock
-tùy chọn:
+Các lockfile được tạo từ `lockfile/requirements.in` và
+`backend/requirements.txt` bằng uv. Sau khi đổi dependency, chuyển vào thư mục
+`lockfile/` rồi cập nhật runtime lock và hai lock tùy chọn:
 
 ```bash
-uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements.txt requirements.in backend/requirements.txt
+cd lockfile
+uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements.txt requirements.in ../backend/requirements.txt
 uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements-dev.txt requirements-dev.in
 uv pip compile --universal --python-version 3.11 --generate-hashes -o requirements-studio.txt requirements-studio.in
+cd ..
 ```
 
 ## Vận hành, bảo mật và giới hạn hiện tại
@@ -1179,7 +1181,7 @@ uv pip compile --universal --python-version 3.11 --generate-hashes -o requiremen
 |---|---|
 | `No API key found for LLM_PROVIDER` | Kiểm tra tên `LLM_PROVIDER`, key đúng provider và `.env` ở root; dừng rồi chạy lại backend sau khi sửa. |
 | `Search not configured` hoặc research không có nguồn mới | Điền `TAVILY_API_KEY`. Kiểm tra quyền/quota Tavily và truy cập Internet của backend. |
-| `ModuleNotFoundError` khi chạy Python | Kích hoạt `.venv`, rồi cài lại `requirements.txt` bằng đúng Python trong môi trường đó. |
+| `ModuleNotFoundError` khi chạy Python | Kích hoạt `.venv`, rồi cài lại `lockfile/requirements.txt` bằng đúng Python trong môi trường đó. |
 | npm báo thiếu package hoặc lỗi Vite | Cài Node.js/npm, chạy `npm --prefix frontend ci` từ root. |
 | Docker báo không kết nối được engine/daemon | Mở Docker Desktop và chờ Linux engine chạy xong; `docker compose config` chỉ kiểm tra cấu hình, còn `build`/`up` cần daemon hoạt động. |
 | Docker build lần đầu chậm hoặc thiếu dung lượng | Image cài TeX Live cho xuất PDF; giải phóng dung lượng Docker hoặc tăng disk allocation rồi build lại. |

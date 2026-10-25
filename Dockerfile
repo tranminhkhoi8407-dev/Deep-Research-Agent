@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-texgyre \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt ./requirements.txt
+COPY lockfile/requirements.txt ./requirements.txt
 RUN pip install --upgrade pip && \
     pip install --require-hashes -r requirements.txt
 
@@ -42,7 +42,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 FROM base AS studio
 
 USER root
-COPY requirements-studio.txt ./requirements-studio.txt
+COPY lockfile/requirements-studio.txt ./requirements-studio.txt
 RUN pip install --require-hashes -r requirements-studio.txt
 USER nexora:nexora
 

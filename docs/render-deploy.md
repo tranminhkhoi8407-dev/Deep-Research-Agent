@@ -56,6 +56,19 @@ maintainer's preview backend.
 4. Register Google/GitHub OAuth callbacks on that Worker origin:
    `/api/auth/callback/google` and `/api/auth/callback/github`.
 
+### Optional Cloudflare pull-request previews
+
+If you enable Cloudflare Workers Builds for pull-request previews, set its
+**Build command** to `npm run build` and **Preview command** to
+`npx wrangler preview`. The Wrangler config contains an empty `previews` block
+because the preview command requires one. It is intentionally empty so forks do
+not contact the maintainer's backend. Preview settings do not inherit production
+variables; add a preview-only `BACKEND_ORIGIN` if the preview should reach an API.
+Keep the production deployment on GitHub Actions (`npx wrangler deploy`), which
+receives `BACKEND_ORIGIN` from the repository's Actions variable. Make sure
+Workers Builds is not also deploying the production Worker from `main`; only one
+pipeline should own production deployments.
+
 ## Optional GitHub Actions CD
 
 `.github/workflows/ci.yml` can deploy the Render API and Cloudflare Worker after

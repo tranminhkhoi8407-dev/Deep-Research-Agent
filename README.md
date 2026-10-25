@@ -533,6 +533,17 @@ API thay vì tự chọn server khác.
    origin Cloudflare Worker. Đăng ký callback OAuth trên origin đó:
    `/api/auth/callback/google` hoặc `/api/auth/callback/github`.
 
+Nếu bật Cloudflare Workers Builds để tạo preview cho pull request, đặt **Build
+command** là `npm run build` và **Preview command** là `npx wrangler preview`.
+Preview được tạo từ `previews` trong `wrangler.jsonc`; mặc định khối này để
+trống để fork không kết nối tới backend của maintainer. Vì vậy API preview trả
+`503` cho tới khi bạn cấu hình một `BACKEND_ORIGIN` an toàn riêng cho Preview.
+Preview không tự kế thừa biến production.
+
+Nếu dùng GitHub Actions bên dưới để deploy production, hãy bảo đảm Cloudflare
+Workers Builds không đồng thời deploy production từ nhánh `main`. Chỉ nên có
+một pipeline chịu trách nhiệm deploy Worker production.
+
 Trong local `wrangler dev`, copy `.dev.vars.example` thành `.dev.vars` và đặt
 `BACKEND_ORIGIN` là backend HTTPS bạn kiểm soát. Không dùng URL preview của
 repository này cho dữ liệu thật. Không đặt OAuth secret hay API secret có tiền

@@ -29,7 +29,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@blocknote/core": "^0.55.0",
+    "@blocknote/core": "^0.56.0",
     "@blocknote/mantine": "^0.55.0",
     "@blocknote/math-block": "^0.55.0",
     "@blocknote/react": "^0.55.0",

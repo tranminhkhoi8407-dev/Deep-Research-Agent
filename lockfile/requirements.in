@@ -12,7 +12,7 @@ itsdangerous>=2.2
 wikipedia>=1.4.0
 
 # Optional second source when SECOND_SOURCE="arxiv" in agent/nodes.py.
-arxiv>=2.1
+arxiv>=4.0.2
 pymupdf>=1.24
 Pillow>=11.0
 
